@@ -4,7 +4,7 @@ import * as pdfjsLib from 'https://esm.sh/pdfjs-dist@4.5.136';
 import { useStoredState } from '../hooks/useStoredState';
 import { VectorStore } from '../lib/vectorStore';
 import { ai, generateBatchEmbeddings, findSynapticLink, semanticChunker } from '../lib/ai';
-import type { Note, Insight } from '../lib/types';
+import type { Note, Insight, SearchDepth } from '../lib/types';
 
 import { NoteEditor } from './NoteEditor';
 import { NoteViewer } from './NoteViewer';
@@ -12,6 +12,7 @@ import { InsightCard } from './InsightCard';
 import { ThinkingStatus } from './ThinkingStatus';
 import { useTranslation } from '../context/LanguageProvider';
 import type { Language } from '../context/LanguageProvider';
+import { SearchDepthSelector } from './SearchDepthSelector';
 
 // Configure the PDF.js worker to process PDFs off the main thread.
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://esm.sh/pdfjs-dist@4.5.136/build/pdf.worker.mjs`;
@@ -20,6 +21,7 @@ export const App: React.FC = () => {
     const [notes, setNotes] = useStoredState<Array<Note>>('synapse-notes', []);
     const [insights, setInsights] = useStoredState<Array<Insight>>('synapse-insights', []);
     const [activeTab, setActiveTab] = useState<'vault' | 'inbox'>('vault');
+    const [searchDepth, setSearchDepth] = useStoredState<SearchDepth>('synapse-search-depth', 'contextual');
     
     const [isEditing, setIsEditing] = useState(false);
     const [viewingNote, setViewingNote] = useState<Note | null>(null);
@@ -37,14 +39,17 @@ export const App: React.FC = () => {
             if (notesNeedingChunking.length > 0) {
                  setLoadingState({ active: true, messages: [t('loadingChunking', notesNeedingChunking.length)] });
                  const updatedNotes = [...notes];
-                 await Promise.all(notesNeedingChunking.map(async (note) => {
+                 
+                 // Process notes sequentially to avoid rate limiting on background chunking.
+                 for (const [index, note] of notesNeedingChunking.entries()) {
+                     setLoadingState(prev => ({...prev, messages: [t('chunkingProgress', index + 1, notesNeedingChunking.length, note.title)]}));
                      const parentChunks = await semanticChunker(note.content, note.title, language);
                      const noteIndex = updatedNotes.findIndex(n => n.id === note.id);
                      if (noteIndex !== -1) {
                          updatedNotes[noteIndex].parentChunks = parentChunks;
                          updatedNotes[noteIndex].chunks = parentChunks.flatMap(pc => pc.children.map(c => c.text));
                      }
-                 }));
+                 }
                  setNotes(updatedNotes); // This triggers the next effect
                  setLoadingState({ active: false, messages: [] });
                  return; // Prevent running the indexing logic below in the same pass
@@ -116,7 +121,7 @@ export const App: React.FC = () => {
         const existingNotes = [...notes];
         setNotes(prevNotes => [...prevNotes, newNote]);
 
-        const links = await findSynapticLink(newNote, existingNotes, setLoadingState, vectorStore.current, language, t);
+        const links = await findSynapticLink(newNote, existingNotes, setLoadingState, vectorStore.current, language, t, searchDepth);
         if (links.length > 0) {
             const newInsights: Insight[] = links.map((link, i) => ({
                 ...link,
@@ -128,7 +133,7 @@ export const App: React.FC = () => {
             setInsights(prevInsights => [...prevInsights, ...newInsights]);
         }
         setLoadingState({ active: false, messages: [] });
-    }, [notes, setNotes, setInsights, language, t]);
+    }, [notes, setNotes, setInsights, language, t, searchDepth]);
 
     const handleBulkUpload = useCallback(async (files: FileList) => {
         if (files.length === 0) return;
@@ -161,20 +166,29 @@ export const App: React.FC = () => {
         }));
 
         setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('chunkingNotes', notesToProcess.length)] }));
-        const newNotesData = await Promise.all(notesToProcess.map(async (noteData) => {
+
+        // Process notes sequentially to avoid hitting API rate limits during chunking.
+        const newNotes: Note[] = [];
+        for (const [index, noteData] of notesToProcess.entries()) {
+            setLoadingState(prev => {
+                const messages = [...prev.messages];
+                messages[messages.length - 1] = t('chunkingProgress', index + 1, notesToProcess.length, noteData.title);
+                return { ...prev, messages };
+            });
+
             const parentChunks = await semanticChunker(noteData.content, noteData.title, language);
             const childTexts = parentChunks.flatMap(pc => pc.children.map(c => c.text));
 
-            return {
+            newNotes.push({
                 id: `note-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
                 title: noteData.title,
                 content: noteData.content,
                 createdAt: new Date().toISOString(),
                 chunks: childTexts,
                 parentChunks
-            } as Note;
-        }));
-        const newNotes: Note[] = newNotesData;
+            });
+        }
+        
         setLoadingState({ active: true, messages: [t('generatingEmbeddings')] });
         const childTextMap = newNotes.flatMap(n => n.parentChunks!.flatMap((pc, pi) => pc.children.map((c, ci) => ({ noteId: n.id, parentIdx: pi, childIdx: ci, text: c.text }))));
         const allChunks = childTextMap.map(c => c.text);
@@ -196,7 +210,7 @@ export const App: React.FC = () => {
             setLoadingState(prev => ({ ...prev, messages: [t('findingConnectionsFor', noteToProcess.title)] }));
             
             const existingNotesForLinkFinding = notes;
-            const links = await findSynapticLink(noteToProcess, existingNotesForLinkFinding, setLoadingState, vectorStore.current, language, t);
+            const links = await findSynapticLink(noteToProcess, existingNotesForLinkFinding, setLoadingState, vectorStore.current, language, t, searchDepth);
 
             if (links.length > 0) {
                  const newInsights: Insight[] = links.map((link, i) => ({
@@ -212,7 +226,7 @@ export const App: React.FC = () => {
 
         setLoadingState({ active: false, messages: [] });
 
-    }, [notes, setNotes, setInsights, language, t]);
+    }, [notes, setNotes, setInsights, language, t, searchDepth]);
 
     const handleFindInsightsForNote = useCallback(async (noteId: string) => {
         const noteToProcess = notes.find(n => n.id === noteId);
@@ -222,7 +236,7 @@ export const App: React.FC = () => {
         setLoadingState({ active: true, messages: [t('findingConnectionsFor', noteToProcess.title)] });
 
         const existingNotes = notes.filter(n => n.id !== noteId);
-        const links = await findSynapticLink(noteToProcess, existingNotes, setLoadingState, vectorStore.current, language, t);
+        const links = await findSynapticLink(noteToProcess, existingNotes, setLoadingState, vectorStore.current, language, t, searchDepth);
 
         if (links.length > 0) {
             const newInsights: Insight[] = links.map((link, i) => ({
@@ -241,7 +255,7 @@ export const App: React.FC = () => {
         setIsFindingLinks(null);
         setLoadingState({ active: false, messages: [] });
 
-    }, [notes, setInsights, language, t]);
+    }, [notes, setInsights, language, t, searchDepth]);
 
     const handleDeleteNote = (noteIdToDelete: string) => {
         if (window.confirm(t('deleteConfirmation'))) {
@@ -297,6 +311,7 @@ export const App: React.FC = () => {
                     <section>
                         <div className="vault-header">
                              <h2>{t('vaultTitle')}</h2>
+                             <SearchDepthSelector value={searchDepth} onChange={setSearchDepth} />
                             <div className="vault-actions">
                                 <button className="button button-secondary" onClick={handleUploadClick}>{t('uploadFilesButton')}</button>
                                 <button className="button" onClick={() => setIsEditing(true)}>{t('newNoteButton')}</button>

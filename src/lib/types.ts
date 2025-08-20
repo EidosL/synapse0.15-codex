@@ -29,8 +29,34 @@ export interface InsightThinkingProcess {
     retrievalFallback?: string;
     synthesisCandidates: { oldNoteId: string; explanation: string; connectionType: string; }[];
     rankingRationale?: string;
-    // The new deep synthesis steps will be captured in the final insight object itself,
-    // so the thinking process can be simplified slightly or expanded later if needed.
+    cycleNumber?: number;
+    impasseReason?: string;
+}
+
+// --- New Insight Structure based on "The Architecture of Insight" ---
+
+export interface EurekaMarkers {
+  suddennessProxy: number; // 0-1
+  fluency: number;         // 0-1
+  conviction: number;      // 0-1
+  positiveAffect: number;  // 0-1
+}
+
+export interface Hypothesis {
+  name: string;
+  restructuringOps: string[]; // e.g., ["invert-constraint","rename-role: container->platform"]
+  statement: string;
+  predictedEvidence: string[];
+  disconfirmers: string[];
+  analogySource?: string;
+  prior: number;
+  posterior: number;
+}
+
+export interface SerendipityInfo {
+    trigger: string;
+    projectedValue: string;
+    exploitationPlan: string;
 }
 
 export interface Insight {
@@ -41,19 +67,59 @@ export interface Insight {
     createdAt: string;
     thinkingProcess?: InsightThinkingProcess;
     
-    // --- Deep Schema Fields ---
-    connectionType: string;
-    oneSentence: string;              // The crisp bridge line (replaces 'explanation')
-    mechanisticChain?: string[];      // 3-5 causal steps
-    stateVariables?: string[];        // named entities/variables that change
-    mappingTable?: { source: string, target: string }[]; // for Analogies
-    boundaryConditions?: string[];    // “only if…/fails when…”
-    counterfactual?: string;          // nearest-change “if not A then…”
-    disanalogy?: string;              // at least one key mismatch
-    predictions?: string[];           // 1-2 testable predictions
+    // --- New structure from the paper ---
+    mode: "eureka" | "serendipity" | "none";
+    reframedProblem: string;
+    insightCore: string;
+    selectedHypothesisName: string;
+    hypotheses: Hypothesis[];
+    eurekaMarkers: EurekaMarkers;
+    bayesianSurprise: number;
+    evidenceRefs: { noteId: string; childId: string; quote: string }[];
+    serendipity?: SerendipityInfo;
+    test: string;
+    risks: string[];
+
+    // --- Derived & Deprecated fields ---
+    confidence?: number; // Kept for sorting, derived from eurekaMarkers.conviction
     
-    // --- Evidence & Confidence ---
+    // Deprecated fields for backward compatibility.
+    // They will not be populated by the new generation logic.
+    connectionType?: string;
+    oneSentence?: string;
+    roleMap?: { role: string, A: string, B: string }[];
+    archetypeBasis?: string[];
+    disanalogy?: string;
+    testableHypothesis?: string;
+    hook?: string;
     evidenceA?: string[];
     evidenceB?: string[];
-    confidence?: number;
+    mechanisticChain?: string[];
+    mappingTable?: { source: string, target: string }[];
+    boundaryConditions?: string[];
+    counterfactual?: string;
+}
+
+
+// --- New types for tiered RAG architecture ---
+
+export type SearchDepth = 'quick' | 'contextual' | 'deep';
+
+export interface SummaryNode {
+    id: string;
+    title: string;
+    summary: string;
+    embedding: number[];
+    childChunkIds: string[]; // IDs of ParentChunks in this cluster
+}
+
+export interface SummaryRelation {
+    sourceId: string; // ID of a SummaryNode
+    targetId: string; // ID of a SummaryNode
+    description: string;
+}
+
+export interface KnowledgeGraph {
+    nodes: SummaryNode[];
+    relations: SummaryRelation[];
 }

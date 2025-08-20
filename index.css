@@ -185,11 +185,46 @@ main {
   gap: 1rem;
 }
 
+.vault-header h2 {
+    margin-right: auto;
+}
+
 .vault-actions {
     display: flex;
     gap: 0.75rem;
-    margin-left: auto;
 }
+
+.depth-selector {
+    display: flex;
+    background-color: var(--background-color);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+}
+
+.depth-selector button {
+    background-color: transparent;
+    border: none;
+    color: var(--secondary-text-color);
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-left: 1px solid var(--border-color);
+}
+.depth-selector button:first-child {
+    border-left: none;
+}
+
+.depth-selector button.active {
+    background-color: var(--accent-color);
+    color: white;
+    font-weight: bold;
+}
+
+.depth-selector button:hover:not(.active) {
+    background-color: var(--surface-color);
+}
+
 
 .note-list {
   display: grid;
@@ -275,11 +310,16 @@ main {
     letter-spacing: 0.05em;
 }
 
-.insight-connection {
-    margin-bottom: 1rem;
+.insight-connection-group {
+    display: flex;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
 }
+
 .insight-connection span {
     color: var(--secondary-text-color);
+    font-size: 0.9rem;
 }
 .insight-connection p {
     font-weight: bold;
@@ -289,12 +329,20 @@ main {
 .insight-suggestion {
     margin-bottom: 1.5rem;
 }
+.insight-suggestion > strong {
+    color: var(--primary-text-color);
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 1rem;
+}
 
 .insight-suggestion blockquote {
-    border-left: 2px solid var(--accent-color);
-    margin: 1rem 0 0 0;
-    padding-left: 1rem;
+    border-left: 3px solid var(--accent-color);
+    margin: 0;
+    padding: 0.25rem 0 0.25rem 1.25rem;
     font-style: italic;
+    font-size: 1.1rem;
+    font-weight: 500;
     color: var(--primary-text-color);
 }
 
@@ -310,6 +358,9 @@ main {
 .structural-detail {
     font-size: 0.9rem;
 }
+.structural-detail.full-width {
+    grid-column: 1 / -1;
+}
 .structural-detail > strong {
     display: block;
     margin-bottom: 0.75rem;
@@ -318,64 +369,100 @@ main {
     font-size: 0.8rem;
     letter-spacing: 0.05em;
 }
-.structural-detail p {
+.structural-detail p, .structural-detail i {
     color: var(--primary-text-color);
 }
 
-.mechanistic-chain {
-    padding-left: 20px;
-    list-style-type: '→ ';
+.hypothesis-card {
+    background: var(--background-color);
+    padding: 1rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
 }
-.mechanistic-chain li {
-    padding-left: 10px;
+.hypothesis-card h4 {
     margin-bottom: 0.5rem;
+    color: var(--accent-color);
 }
-
-.mapping-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9rem;
-}
-.mapping-table th, .mapping-table td {
-    text-align: left;
-    padding: 0.5rem;
+.hypothesis-card .statement {
+    font-style: italic;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
     border-bottom: 1px solid var(--border-color);
 }
-.mapping-table th {
+
+.hypothesis-details-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+.ops-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+.op-tag {
+    background-color: var(--surface-color);
     color: var(--secondary-text-color);
-    font-weight: normal;
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    font-size: 0.8rem;
+    border: 1px solid var(--border-color);
 }
-.mapping-table tr:last-child td {
-    border-bottom: none;
-}
+
 
 .boundary-conditions, .predictions-list {
     list-style-type: '• ';
     padding-left: 15px;
+    margin: 0;
 }
-
 .boundary-conditions li, .predictions-list li {
     padding-left: 10px;
     margin-bottom: 0.5rem;
 }
 
 
-.insight-confidence {
-    font-size: 0.9rem;
-    color: var(--secondary-text-color);
-    margin-bottom: 1.5rem;
-    padding: 0.5rem 1rem;
-    background-color: var(--background-color);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    display: inline-block;
+.eureka-markers-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
 }
-.insight-confidence strong {
+
+.eureka-marker {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.9rem;
+}
+.marker-label {
+    flex-basis: 80px;
+    text-align: right;
+    color: var(--secondary-text-color);
+}
+.marker-bar-container {
+    flex-grow: 1;
+    background-color: var(--background-color);
+    border-radius: 4px;
+    height: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+}
+.marker-bar {
+    height: 100%;
+    background-color: var(--accent-color);
+    border-radius: 3px;
+    transition: width 0.3s ease-in-out;
+}
+.marker-value {
+    flex-basis: 40px;
+    font-weight: bold;
     color: var(--primary-text-color);
 }
 
+
 .insight-evidence {
-    margin-bottom: 1.5rem;
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
     font-size: 0.9rem;
 }
 .insight-evidence > strong {
@@ -404,6 +491,7 @@ main {
     margin-bottom: 0.5rem;
     color: var(--primary-text-color);
     font-family: monospace;
+    font-size: 0.85rem;
 }
 
 .insight-actions {
