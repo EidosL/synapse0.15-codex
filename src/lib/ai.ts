@@ -3,10 +3,20 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { Note, Insight, InsightThinkingProcess, ParentChunk, SearchDepth, Hypothesis, EurekaMarkers, SerendipityInfo } from './types';
 import type { VectorStore } from './vectorStore';
 import type { Language, translations } from '../context/LanguageProvider';
+import { type Tier, policyFor, Budget } from '../insight/budget';
+import { pickEvidenceSubmodular, type Frag } from '../insight/evidencePicker';
+import { capFragmentsByBudget, estTokens } from '../insight/tokenGovernor';
+import { counterInsightCheck } from '../insight/counterInsight';
+import { computeSignals } from '../insight/signals';
+import { shouldDeepen } from '../insight/depthController';
+import { logMetrics } from '../insight/logging';
+import { rerankLocal } from '../insight/reranker';
+
 
 // --- API & AI ---
 export const MODEL_NAME = 'gemini-2.5-flash';
 export const EMBEDDING_MODEL_NAME = 'text-embedding-004';
+const ENABLE_LOCAL_RERANK = process.env.ENABLE_LOCAL_RERANK === '1';
 
 let aiInstance: GoogleGenAI | null = null;
 if (process.env.API_KEY) {
@@ -91,12 +101,14 @@ Document Content:\n---\n${text.slice(0, 20000)}\n---\nReturn ONLY the JSON array
 
     try {
         const response = await ai.models.generateContent({
-            model: MODEL_NAME, contents: prompt, config: {
+            model: MODEL_NAME,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: {
                 responseMimeType: 'application/json',
                 responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
             }
         });
-        const chunks = safeParseGeminiJson<string[]>(response.text);
+        const chunks = safeParseGeminiJson<string[]>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
         return buildStructure((chunks && chunks.length > 0) ? chunks : [text]);
     } catch (error) {
         console.error("Semantic chunking failed:", error);
@@ -107,22 +119,21 @@ Document Content:\n---\n${text.slice(0, 20000)}\n---\nReturn ONLY the JSON array
 
 export const generateBatchEmbeddings = async (texts: string[]): Promise<number[][]> => {
     if (!ai || texts.length === 0) return texts.map(() => []);
-    try {
-        const res = await ai.models.embedContent({ model: EMBEDDING_MODEL_NAME, contents: texts });
-        if (!res?.embeddings || res.embeddings.length !== texts.length) throw new Error('Mismatched embedding count');
-        return res.embeddings.map(e => e.values);
-    } catch (error) {
-        console.warn("Batch embedding failed, using micro-batch fallback:", error);
-        // CRITICAL FIX: Use Array.from to create new arrays, not references to the same array.
-        const out: number[][] = Array.from({length: texts.length}, () => []);
-        for (let i = 0; i < texts.length; i += 100) {
-            try {
-                 const chunkRes = await ai.models.embedContent({ model: EMBEDDING_MODEL_NAME, contents: texts.slice(i, i + 100) });
-                 if (chunkRes?.embeddings) chunkRes.embeddings.forEach((v, k) => out[i+k] = v.values);
-            } catch (innerError) { console.error(`Error in micro-batch at index ${i}`, innerError); }
+    const out: number[][] = Array.from({ length: texts.length }, () => []);
+    for (let i = 0; i < texts.length; i++) {
+        try {
+            const res = await ai.models.embedContent({
+                model: EMBEDDING_MODEL_NAME,
+                contents: [{ role: 'user', parts: [{ text: texts[i] }] }]
+            });
+            if (res.embeddings && res.embeddings[0] && res.embeddings[0].values) {
+                out[i] = res.embeddings[0].values;
+            }
+        } catch (innerError) {
+            console.error(`Error embedding text at index ${i}`, innerError);
         }
-        return out;
     }
+    return out;
 };
 
 // --- New Insight Generation Engine (based on "The Architecture of Insight") ---
@@ -227,7 +238,7 @@ ${evidenceChunks.map(c => `[${c.noteId}::${c.childId}] ${c.text}`).join('\n')}
     try {
         const response = await ai.models.generateContent({
             model: MODEL_NAME,
-            contents: prompt,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
             config: {
                 responseMimeType: 'application/json',
                 // @ts-ignore
@@ -235,7 +246,7 @@ ${evidenceChunks.map(c => `[${c.noteId}::${c.childId}] ${c.text}`).join('\n')}
                 temperature
             }
         });
-        const result = safeParseGeminiJson<InsightPayload>(response.text);
+        const result = safeParseGeminiJson<InsightPayload>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
         if (result && result.mode !== 'none') {
             // Precise quote validation
             const chunkMap = new Map<string, string>();
@@ -256,33 +267,6 @@ ${evidenceChunks.map(c => `[${c.noteId}::${c.childId}] ${c.text}`).join('\n')}
 
 // --- RAG PIPELINE ---
 
-// --- Tiered Budgets for Cost Control ---
-type Tier = 'free'|'pro';
-type Budget = {
-  maxQueries: number;
-  perQueryK: number;
-  finalK: number;
-  maxFragments: number;
-  maxCycles: number;
-  tempProbe: number;
-  tempInsight: number;
-};
-
-const TIERS: Record<Tier, Budget> = {
-  free: { maxQueries: 4, perQueryK: 5, finalK: 4, maxFragments: 12, maxCycles: 1, tempProbe: 0.2, tempInsight: 0.2 },
-  pro:  { maxQueries: 10, perQueryK: 12, finalK: 8, maxFragments: 24, maxCycles: 3, tempProbe: 0.7, tempInsight: 0.5 }
-};
-
-const getBudgetForDepth = (depth: SearchDepth): Budget => {
-    switch (depth) {
-        case 'quick': return TIERS.free;
-        case 'contextual': return TIERS.free;
-        case 'deep': return TIERS.pro;
-        default: return TIERS.free;
-    }
-};
-
-
 const RELATIONS = ['Contradiction', 'PracticalApplication', 'HistoricalAnalogy', 'ProblemToSolution', 'DeepSimilarity', 'Mechanism', 'Boundary', 'TradeOff'] as const;
 const cheapExpandQueries = (topic: string) => ({
   Contradiction: `${topic} limitation counterexample`, PracticalApplication: `${topic} how to apply implementation`,
@@ -298,12 +282,17 @@ const generateSearchQueries = async (note: Note, budget: Budget): Promise<string
     try {
         const response = await ai.models.generateContent({
             model: MODEL_NAME,
-            contents: `Return JSON with ANY subset of keys: ${RELATIONS.join(', ')}. Each value must be a concise search query derived from:\nTitle: ${note.title}\nContent: ${note.content.slice(0, 1000)}`,
-            config: { responseMimeType: "application/json", responseSchema: {
-                type: Type.OBJECT, properties: RELATIONS.reduce((acc, key) => ({ ...acc, [key]: { type: Type.STRING } }), {}), required: []
-            }}
+            contents: [{ role: 'user', parts: [{ text: `Return JSON with ANY subset of keys: ${RELATIONS.join(', ')}. Each value must be a concise search query derived from:\nTitle: ${note.title ?? ''}\nContent: ${note.content.slice(0, 1000)}` }] }],
+            config: {
+                responseMimeType: "application/json", responseSchema: {
+                    type: Type.OBJECT, properties: RELATIONS.reduce((acc: { [key: string]: { type: Type.STRING } }, key) => {
+                        acc[key] = { type: Type.STRING };
+                        return acc;
+                    }, {}), required: []
+                }
+            }
         });
-        const obj = safeParseGeminiJson<Record<string, string>>(response.text) || {};
+        const obj = safeParseGeminiJson<Record<string, string>>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '') || {};
         return Array.from(new Set([...Object.values(obj).filter(Boolean), ...Object.values(cheap)])).slice(0, budget.maxQueries);
     } catch (error) {
         console.error("Error generating search queries, using fallback:", error);
@@ -346,7 +335,7 @@ const retrieveCandidateNotesHQ = async (queries: string[], vectorStore: VectorSt
   const queryEmbeddings = await generateBatchEmbeddings(queries);
 
   queryEmbeddings.forEach(embedding => {
-      if (embedding.length > 0) {
+      if (embedding && embedding.length > 0) {
           const matches = vectorStore.findNearest(embedding, perQueryK, newNoteId);
           vecLists.push([...new Set(matches.map(m => m.parentChunkId.split(':')[0]))]);
       }
@@ -373,70 +362,21 @@ Generate a JSON array of 2 new, diverse search queries to overcome this failure.
 - Q2: Query for an analogy from a distant domain (e.g., biology, economics, physics) to reframe the problem.
 Return ONLY the JSON array of strings.`;
     try {
-        const response = await ai.models.generateContent({ model: MODEL_NAME, contents: prompt, config: {
-            responseMimeType: "application/json",
-            responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } },
-            temperature: budget.tempProbe
-        }});
-        return safeParseGeminiJson<string[]>(response.text) || [];
+        const response = await ai.models.generateContent({
+            model: MODEL_NAME,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } },
+                temperature: budget.tempProbe
+            }
+        });
+        return safeParseGeminiJson<string[]>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '') || [];
     } catch (e) {
         console.error("Self-probing failed:", e);
         return [];
     }
 };
-
-const JACCARD = (a:string, b:string) => {
-  const A = new Set(a.toLowerCase().split(/\W+/).filter(Boolean));
-  const B = new Set(b.toLowerCase().split(/\W+/).filter(Boolean));
-  if (A.size === 0 && B.size === 0) return 1.0;
-  const inter = [...A].filter(x=>B.has(x)).length;
-  return inter / Math.max(1, A.size + B.size - inter);
-};
-
-const selectTopEvidenceChunks = (
-  newNote: Note,
-  candNote: Note,
-  queries: string[],
-  maxChunks: number = 16
-): {noteId: string, childId: string, text: string}[] => {
-    const queryTerms = new Set(queries.flatMap(tokenize));
-    const scoreChunk = (text: string): number => {
-        return tokenize(text).reduce((score, word) => score + (queryTerms.has(word) ? 1 : 0), 0);
-    };
-    
-    const capText = (s:string, n=240) => s.length>n ? s.slice(0,n-1)+'…' : s;
-
-    const toFrags = (n: Note) =>
-      n.parentChunks?.flatMap(pc =>
-        pc.children.map(c => ({
-          noteId: n.id,
-          parentId: pc.id,
-          childId: `${pc.id}::${c.id}`, // Use :: to avoid hyphen collisions
-          text: c.text,
-          score: scoreChunk(c.text)
-        }))
-      ) ?? [];
-
-    const pool = [...toFrags(newNote), ...toFrags(candNote)].sort((a,b)=> b.score - a.score);
-
-    const out: typeof pool = [];
-    const perNoteCap = Math.max(4, Math.ceil(maxChunks / 2.5));
-    const usedByNote = new Map<string, number>();
-
-    for (const f of pool) {
-        if (out.length >= maxChunks) break;
-        const used = usedByNote.get(f.noteId) ?? 0;
-        if (used >= perNoteCap) continue;
-
-        if (out.some(x => JACCARD(x.text, f.text) > 0.8)) continue;
-
-        out.push(f);
-        usedByNote.set(f.noteId, used + 1);
-    }
-    
-    return out.map(({noteId, childId, text}) => ({noteId, childId, text: capText(text)}));
-};
-
 
 const runSynthesisAndRanking = async (
     newNote: Note,
@@ -451,12 +391,39 @@ const runSynthesisAndRanking = async (
 
     setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingSynthesizing', candNotes.length)] }));
     
-    const insightPromises = candNotes.map(candNote => {
-        const evidenceChunks = selectTopEvidenceChunks(newNote, candNote, searchQueries, budget.maxFragments);
-        return generateInsight(evidenceChunks, language, budget.tempInsight);
+    const insightPromises = candNotes.map(async (candNote) => {
+        const mkPool = (note: Note): Frag[] =>
+            note.parentChunks?.flatMap(pc => pc.children.map(c => ({
+                noteId: note.id,
+                parentId: pc.id,
+                childId: `${pc.id}::${c.id}`,
+                text: c.text,
+                tokens: estTokens(c.text)
+            }))) ?? [];
+
+        const pool = [...mkPool(newNote), ...mkPool(candNote)];
+        const queryText = (searchQueries.join(' ') || newNote.title || '').slice(0, 600);
+
+        let picked = pickEvidenceSubmodular(pool, queryText, budget.maxFragments);
+        if (ENABLE_LOCAL_RERANK) {
+            const pairs = picked.map(p => ({ query: queryText, text: p.text, meta: p }));
+            const reranked = await rerankLocal(pairs, budget.maxFragments);
+            picked = reranked.map(r => r.meta as Frag);
+        }
+        picked = capFragmentsByBudget(picked, budget.contextCapChars);
+
+        const evidenceChunks = picked.map(p => ({ noteId: p.noteId, childId: p.childId, text: p.text }));
+
+        const insight = await generateInsight(evidenceChunks, language, budget.tempInsight);
+
+        if (insight) {
+            const ctr = await counterInsightCheck(insight.insightCore, evidenceChunks);
+            (insight as any).__counter = ctr;
+        }
+        return insight;
     });
 
-    const insights = (await Promise.all(insightPromises)).filter((i): i is InsightPayload => i !== null);
+    const insights = (await Promise.all(insightPromises)).filter((i): i is InsightPayload => !!i);
     if (insights.length === 0) return { results: [], candIds: candNotes.map(c => c.id) };
 
     setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingRanking')] }));
@@ -466,7 +433,9 @@ const runSynthesisAndRanking = async (
         const surprise = insight.bayesianSurprise;
         const diversity = new Set(insight.evidenceRefs.map(e => e.childId.split('::')[0])).size;
         
-        const score = 0.45 * conviction + 0.25 * fluency + 0.2 * surprise + 0.1 * Math.tanh(diversity/6);
+        const ctr = (insight as any).__counter as { severity?: number } | undefined;
+        const penalty = ctr?.severity ? (0.25 * Math.min(1, ctr.severity)) : 0;
+        const score = 0.45 * conviction + 0.25 * fluency + 0.20 * surprise + 0.10 * Math.tanh(diversity/6) - penalty;
         return { insight, oldNoteId: candNotes[i].id, score };
     });
     
@@ -492,19 +461,20 @@ const runSynthesisAndRanking = async (
 };
 
 export const findSynapticLink = async (
-    newNote: Note, existingNotes: Note[], setLoadingState: SetLoadingState, vectorStore: VectorStore,
-    language: Language = 'en', t: TFunction, depth: SearchDepth = 'contextual'
+    newNote: Note, existingNotes: Note[], setLoadingState: Dispatch<SetStateAction<LoadingState>>, vectorStore: VectorStore,
+    language: Language = 'en', t: TFunction, tier: Tier = 'pro'
 ): Promise<InsightResult[]> => {
     if (existingNotes.length === 0) return [];
 
-    const budget = getBudgetForDepth(depth);
+    const startTime = Date.now();
+    const budget = policyFor(tier);
 
     let memoryWorkspace = {
         probes: new Set<string>(), retrievedNoteIds: new Set<string>(),
         bestResults: [] as InsightResult[], impasseReason: "Initial search."
     };
-
-    for (let cycle = 1; cycle <= budget.maxCycles; cycle++) {
+    let cycle = 0;
+    for (cycle = 1; cycle <= budget.maxCycles; cycle++) {
         let currentQueries: string[];
         if (cycle === 1) {
             setLoadingState({ active: true, messages: [t('thinkingBrainstorming')] });
@@ -544,6 +514,39 @@ export const findSynapticLink = async (
         if (topConfidence > 0.85 && cycle === 1) break; // Early exit on high confidence in first cycle
 
         memoryWorkspace.impasseReason = `Best connection has conviction of only ${(topConfidence * 100).toFixed(0)}%. It may lack a clear mechanism or predictive power.`;
+
+        if (cycle < budget.maxCycles) {
+            const topResult = memoryWorkspace.bestResults[0];
+            const evTexts = topResult?.evidenceRefs.map(r => r.quote) ?? [];
+            const candidateScores = memoryWorkspace.bestResults.map(r => r.confidence ?? 0);
+
+            const sig = computeSignals({
+                queries: Array.from(memoryWorkspace.probes),
+                candidateScores,
+                evidenceTexts: evTexts
+            });
+
+            const est = {
+                tokens: evTexts.reduce((a, b) => a + estTokens(b), 0),
+                llmCalls: 1
+            };
+
+            logMetrics({
+                tier,
+                depthCycles: cycle,
+                tokensEstimated: est.tokens,
+                llmCalls: est.llmCalls,
+                candidateNotes: candNotes.length,
+                evidenceSnippets: topResult?.evidenceRefs.length ?? 0,
+                signals: sig,
+                mode: topResult?.mode,
+                latencyMs: Date.now() - startTime
+            });
+
+            if (!shouldDeepen(cycle, sig, budget)) {
+                break;
+            }
+        }
     }
 
     memoryWorkspace.bestResults.forEach(r => {

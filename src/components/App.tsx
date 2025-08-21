@@ -1,5 +1,6 @@
 import React, { useRef, useCallback } from 'react';
 import { useStore } from '../lib/store';
+
 import { NoteEditor } from './NoteEditor';
 import { NoteViewer } from './NoteViewer';
 import { ThinkingStatus } from './ThinkingStatus';
@@ -24,6 +25,7 @@ export const App: React.FC = () => {
     
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { t, toggleLanguage } = useTranslation();
+
 
     const handleUploadClick = () => fileInputRef.current?.click();
 
