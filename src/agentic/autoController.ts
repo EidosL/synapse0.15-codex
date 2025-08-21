@@ -1,16 +1,24 @@
-export interface AutoDeepenResult {
-    result?: any;
-    transcript?: string;
-    summary?: string;
-}
+import { runAgenticInsight } from './agenticLoop';
+import type { Tier } from './budget';
 
-export const maybeAutoDeepen = async (
-    topResult: any,
-    setLoadingState: (updater: any) => void,
-    t: (key: any, ...args: any[]) => string,
-    _language: any,
-    _budget: any
-): Promise<AutoDeepenResult | null> => {
-    setLoadingState((prev: any) => ({ ...prev, messages: [...prev.messages, t('thinkingDeepening', 1)] }));
-    return null;
-};
+export async function maybeAutoDeepen({
+  tier, topic, insightCore, evidenceTexts, tools, hooks
+}:{
+  tier: Tier; topic: string; insightCore: string;
+  evidenceTexts: string[]; tools: { web:any; mind:any }; hooks?: any;
+}) {
+  if (tier !== 'pro') return null;
+
+  // Very cheap gate: only deepen if evidence is thin or generic
+  const thin = evidenceTexts.join(' ').length < 1200;
+  if (!thin) return null;
+
+  const ctx = await runAgenticInsight({
+    tier, topic,
+    transcript: [`INSIGHT: ${insightCore}`],
+    mindHints: [],
+    hooks
+  }, tools);
+
+  return ctx?.transcript.join('\n');
+}

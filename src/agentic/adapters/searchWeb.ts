@@ -1,36 +1,33 @@
+import type { WebSearch } from '../types';
 import { getJson } from 'serpapi';
 
-export interface WebSearchResult {
-    title: string;
-    url: string;
-    snippet: string;
-}
-
-/**
- * Perform a web search using the SerpAPI provider.
- * @param query The search query string.
- * @returns Array of mapped search results.
- */
-export async function search(query: string): Promise<WebSearchResult[]> {
+export const searchWeb: WebSearch = {
+  async search(q: string, k: number) {
+    // This implementation uses the serpapi library directly, as was present
+    // in the codebase, instead of fetching from a backend API route.
+    // This assumes the API key is available in the environment.
     const apiKey = process.env.SERPAPI_API_KEY;
     if (!apiKey) {
-        throw new Error('SERPAPI_API_KEY environment variable not set');
+        console.error('SERPAPI_API_KEY environment variable not set. Web search will not work.');
+        return [];
     }
 
     try {
         const data = await getJson({
             engine: 'google',
-            q: query,
+            q: q,
+            num: k, // Ask for k results
             api_key: apiKey
         });
         const results: any[] = data.organic_results || [];
         return results.map((r: any) => ({
-            title: r.title ?? '',
+            title: r.title ?? 'Untitled',
+            snippet: r.snippet ?? '',
             url: r.link ?? '',
-            snippet: r.snippet ?? ''
-        }));
+        })).filter(r => r.url).slice(0, k); // Ensure we have a URL and respect k
     } catch (error: any) {
         console.error('SerpAPI search failed:', error);
-        throw new Error(`SerpAPI search failed: ${error.message || error}`);
+        return []; // Return empty array on failure to avoid crashing the agentic loop.
     }
-}
+  }
+};

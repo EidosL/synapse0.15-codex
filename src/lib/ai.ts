@@ -12,6 +12,8 @@ import { shouldDeepen } from '../insight/depthController';
 import { logMetrics } from '../insight/logging';
 import { rerankLocal } from '../insight/reranker';
 import { maybeAutoDeepen } from '../agentic/autoController';
+import { searchWeb } from '../agentic/adapters/searchWeb';
+import { mindMapTool } from '../agentic/adapters/mindMapTool';
 
 
 // --- API & AI ---
@@ -461,6 +463,32 @@ const runSynthesisAndRanking = async (
     return { results, candIds: candNotes.map(c => c.id) };
 };
 
+async function postProcessWithAgentic({
+  tier, newNote, results
+}:{
+  tier: 'free'|'pro'; newNote: Note; results: InsightResult[];
+}): Promise<InsightResult[]> {
+  if (tier !== 'pro' || !results?.length) return results;
+
+  const top = results[0];
+  const evidenceTexts = (top.evidenceRefs || []).map((e:any)=> e.quote).filter(Boolean);
+  const transcript = await maybeAutoDeepen({
+    tier: 'pro',
+    topic: newNote.title || newNote.content.slice(0,120),
+    insightCore: top.insightCore || 'Candidate insight',
+    evidenceTexts,
+    tools: { web: searchWeb, mind: mindMapTool() },
+    hooks: { onLog: console.debug, onTool: console.debug }
+  });
+
+  if (transcript) {
+    top.insightCore = `${top.insightCore} — refined via agentic research`;
+    top.thinkingProcess = top.thinkingProcess || {};
+    top.thinkingProcess.agenticTranscript = transcript;
+  }
+  return results;
+}
+
 export const findSynapticLink = async (
     newNote: Note, existingNotes: Note[], setLoadingState: Dispatch<SetStateAction<LoadingState>>, vectorStore: VectorStore,
     language: Language = 'en', t: TFunction, tier: Tier = 'pro'
@@ -511,26 +539,6 @@ export const findSynapticLink = async (
             memoryWorkspace.bestResults = uniqueResults.slice(0,3);
         }
 
-        if (tier === 'pro' && memoryWorkspace.bestResults[0]) {
-            const agentic = await maybeAutoDeepen(memoryWorkspace.bestResults[0], setLoadingState, t, language, budget);
-            if (agentic) {
-                let refined = memoryWorkspace.bestResults[0];
-                if (agentic.result) {
-                    refined = { ...refined, ...agentic.result } as InsightResult;
-                    memoryWorkspace.bestResults[0] = refined;
-                }
-                if (agentic.transcript || agentic.summary) {
-                    refined.thinkingProcess = (refined.thinkingProcess || {}) as InsightThinkingProcess;
-                    if (agentic.transcript) {
-                        refined.thinkingProcess.agenticTranscript = agentic.transcript;
-                    }
-                    if (agentic.summary) {
-                        refined.thinkingProcess.refinementSummary = agentic.summary;
-                    }
-                }
-            }
-        }
-
         const topConfidence = memoryWorkspace.bestResults[0]?.confidence ?? 0;
         if (topConfidence > 0.85 && cycle === 1) break; // Early exit on high confidence in first cycle
 
@@ -577,5 +585,7 @@ export const findSynapticLink = async (
         }
     });
 
-    return memoryWorkspace.bestResults;
+    const finalResults = await postProcessWithAgentic({ tier, newNote, results: memoryWorkspace.bestResults });
+
+    return finalResults;
 };
