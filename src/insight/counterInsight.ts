@@ -36,15 +36,14 @@ ${evidence.map(e => `[${e.noteId}::${e.childId}] ${e.text}`).join('\n')}
   const res = await ai.models.generateContent({
     model: MODEL_NAME,
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: {
+    config: {
       responseMimeType: 'application/json',
       responseSchema: COUNTER_SCHEMA,
       temperature: 0.1,
-    },
-    safetySettings: [],
+    }
   });
   const parsed = safeParseGeminiJson<CounterOut>(
-    res.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+    res.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
   );
   return parsed;
 }
