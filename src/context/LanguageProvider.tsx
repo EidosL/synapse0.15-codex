@@ -1,206 +1,30 @@
-import React, { createContext, useContext, useCallback } from 'react';
-import { useStoredState } from '../hooks/useStoredState';
-
-export type Language = 'en' | 'zh';
-
-export const translations = {
-  en: {
-    // Header
-    vaultTab: 'Vault',
-    inboxTab: 'Inbox',
-    // Vault View
-    vaultTitle: 'Knowledge Vault',
-    loadingIndexing: (count: number) => `Indexing ${count} note(s)...`,
-    loadingChunking: (count: number) => `Chunking ${count} unindexed note(s)...`,
-    uploadFilesButton: 'Upload Files',
-    newNoteButton: 'New Note',
-    findConnectionsButtonTitle: 'Find Connections',
-    deleteNoteButtonTitle: 'Delete Note',
-    emptyVaultTitle: 'Your Vault is Empty',
-    emptyVaultMessage: 'Kickstart your knowledge base by adding a note or uploading existing files (.md, .txt, .pdf).',
-    // Search Depth
-    depthQuick: 'Quick',
-    depthContextual: 'Contextual',
-    depthDeep: 'Deep',
-    // Inbox View
-    emptyInboxTitle: 'Inbox Zero',
-    emptyInboxMessage: 'No new insights right now. Add more notes to discover new connections!',
-    // Insight Card
-    newNoteLabel: 'New Note:',
-    connectedToLabel: 'Connected To:',
-    synapseSuggestsLabel: 'Synapse Suggests:',
-    fromLabel: (title: string) => `From "${title}":`,
-    viewSideBySideButton: 'View Side-by-Side',
-    keepButton: 'Keep',
-    dismissButton: 'Dismiss',
-    showThinkingProcess: 'Show Thinking Process',
-    hideThinkingProcess: 'Hide Thinking Process',
-    cognitiveScaffoldingProcessTitle: 'Cognitive Scaffolding Process',
-    planningStep: '1. Planning: Generated Search Queries',
-    retrievalStep: '2. Retrieval: Identified Candidate Notes',
-    synthesisStep: '3. Synthesis: Initial Potential Connections',
-    rankingStep: '4. Ranking & Bridging Pipeline',
-    // New Insight Card Labels
-    insightCoreLabel: 'Core Insight',
-    reframedProblemLabel: 'Reframed Problem',
-    selectedHypothesisLabel: 'Selected Hypothesis',
-    restructuringOpsLabel: 'Restructuring Operations',
-    predictedEvidenceLabel: 'Predicted Evidence',
-    disconfirmersLabel: 'Disconfirmers',
-    eurekaMarkersLabel: 'Insight Markers',
-    convictionLabel: 'Conviction',
-    fluencyLabel: 'Fluency',
-    surpriseLabel: 'Surprise',
-    supportingEvidenceLabel: 'Supporting Evidence',
-    // Modals
-    newNoteModalTitle: 'New Note',
-    saveNoteButton: 'Save Note',
-    noteTitlePlaceholder: 'Note Title',
-    noteContentPlaceholder: 'Write your thoughts here... (Markdown supported)',
-    comparingNotesTitle: 'Comparing Notes',
-    // App statuses
-    savingAndChunking: 'Saving and chunking note...',
-    embeddingChunks: 'Embedding note chunks...',
-    readingFiles: (count: number) => `Reading ${count} file(s)...`,
-    chunkingNotes: (count: number) => `Chunking ${count} note(s)...`,
-    chunkingProgress: (current: number, total: number, title: string) => `(${current}/${total}) Chunking: ${title}...`,
-    generatingEmbeddings: 'Generating embeddings for chunks...',
-    findingConnectionsFor: (title: string) => `Finding connections for "${title}"...`,
-    noNewConnections: 'No new connections found for this note.',
-    deleteConfirmation: 'Are you sure you want to delete this note and all its associated insights? This action cannot be undone.',
-    apiKeyWarning: 'Warning: API_KEY is not configured. AI connection features are disabled.',
-    languageToggle: '中文',
-    // Thinking Status
-    thinkingBrainstorming: 'Brainstorming avenues of inquiry...',
-    thinkingSearching: 'Searching knowledge base for relevant concepts...',
-    thinkingExtractingCards: (count: number) => `Extracting system cards for ${count} note(s)...`,
-    thinkingBridging: (count: number) => `Bridging concepts for ${count} potential connections...`,
-    thinkingRanking: 'Prioritizing the most promising connections...',
-    thinkingSynthesizing: (count: number) => `Synthesizing ${count} potential insight(s)...`,
-    thinkingDeepening: (count: number) => `Developing structured arguments for ${count} connection(s)...`,
-    thinkingCritiquing: 'Critically evaluating arguments for rigor and evidence...',
-    thinkingReflecting: 'Reflecting on initial findings...',
-    thinkingReprobing: (reason: string) => `Probing deeper: ${reason}`,
-  },
-  zh: {
-    // Header
-    vaultTab: '保险库',
-    inboxTab: '收件箱',
-    // Vault View
-    vaultTitle: '知识库',
-    loadingIndexing: (count: number) => `正在索引 ${count} 个笔记...`,
-    loadingChunking: (count: number) => `正在为 ${count} 个未索引的笔记分块...`,
-    uploadFilesButton: '上传文件',
-    newNoteButton: '新建笔记',
-    findConnectionsButtonTitle: '查找连接',
-    deleteNoteButtonTitle: '删除笔记',
-    emptyVaultTitle: '您的保险库是空的',
-    emptyVaultMessage: '通过添加笔记或上传现有文件（.md, .txt, .pdf）来启动您的知识库。',
-    // Search Depth
-    depthQuick: '快速',
-    depthContextual: '情境',
-    depthDeep: '深度',
-    // Inbox View
-    emptyInboxTitle: '收件箱已清空',
-    emptyInboxMessage: '暂时没有新的见解。添加更多笔记以发现新的联系！',
-    // Insight Card
-    newNoteLabel: '新笔记：',
-    connectedToLabel: '连接到：',
-    synapseSuggestsLabel: 'Synapse 建议：',
-    fromLabel: (title: string) => `来自 "${title}":`,
-    viewSideBySideButton: '并排查看',
-    keepButton: '保留',
-    dismissButton: '忽略',
-    showThinkingProcess: '显示思考过程',
-    hideThinkingProcess: '隐藏思考过程',
-    cognitiveScaffoldingProcessTitle: '认知支架过程',
-    planningStep: '1. 规划：生成搜索查询',
-    retrievalStep: '2. 检索：识别候选笔记',
-    synthesisStep: '3. 合成：初步潜在连接',
-    rankingStep: '4. 排名与桥接流程',
-    // New Insight Card Labels
-    insightCoreLabel: '核心洞见',
-    reframedProblemLabel: '重构问题',
-    selectedHypothesisLabel: '选定假设',
-    restructuringOpsLabel: '重构操作',
-    predictedEvidenceLabel: '预测证据',
-    disconfirmersLabel: '反证',
-    eurekaMarkersLabel: '洞见标记',
-    convictionLabel: '确信度',
-    fluencyLabel: '流畅度',
-    surpriseLabel: '惊喜度',
-    supportingEvidenceLabel: '支持证据',
-    // Modals
-    newNoteModalTitle: '新笔记',
-    saveNoteButton: '保存笔记',
-    noteTitlePlaceholder: '笔记标题',
-    noteContentPlaceholder: '在这里写下你的想法... (支持 Markdown)',
-    comparingNotesTitle: '比较笔记',
-    // App statuses
-    savingAndChunking: '正在保存和分块笔记...',
-    embeddingChunks: '正在嵌入笔记块...',
-    readingFiles: (count: number) => `正在读取 ${count} 个文件...`,
-    chunkingNotes: (count: number) => `正在为 ${count} 个笔记分块...`,
-    chunkingProgress: (current: number, total: number, title: string) => `(${current}/${total}) 正在分块: ${title}...`,
-    generatingEmbeddings: '正在为块生成嵌入...',
-    findingConnectionsFor: (title: string) => `正在为 "${title}" 查找连接...`,
-    noNewConnections: '未找到此笔记的新连接。',
-    deleteConfirmation: '您确定要删除此笔记及其所有相关见解吗？此操作无法撤销。',
-    apiKeyWarning: '警告：未配置 API_KEY。AI 连接功能已禁用。',
-    languageToggle: 'EN',
-     // Thinking Status
-    thinkingBrainstorming: '正在构思探究途径...',
-    thinkingSearching: '正在知识库中搜索相关概念...',
-    thinkingExtractingCards: (count: number) => `正在为 ${count} 个笔记提取系统卡...`,
-    thinkingBridging: (count: number) => `正在为 ${count} 个潜在连接构建概念桥梁...`,
-    thinkingRanking: '正在对最有希望的连接进行优先级排序...',
-    thinkingSynthesizing: (count: number) => `正在合成 ${count} 个潜在见解...`,
-    thinkingDeepening: (count:number) => `正在为 ${count} 个连接构建结构化论证...`,
-    thinkingCritiquing: '正在严格评估论证的严谨性和证据...',
-    thinkingReflecting: '反思初步发现...',
-    thinkingReprobing: (reason: string) => `深入探究：${reason}`,
-  }
-};
-
-type TranslationKey = keyof typeof translations.en;
-
-interface LanguageContextType {
-    language: Language;
-    toggleLanguage: () => void;
-    t: (key: TranslationKey, ...args: any[]) => string;
-}
-
-const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
+import React from 'react';
+import { I18nextProvider, useTranslation as useTranslationi18next } from 'react-i18next';
+import i18n from './i18n';
+import { useStore } from '../lib/store';
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [language, setLanguage] = useStoredState<Language>('synapse-language', 'en');
+    const { language } = useStore();
 
-    const toggleLanguage = useCallback(() => {
-        setLanguage(prevLang => prevLang === 'en' ? 'zh' : 'en');
-    }, [setLanguage]);
-
-    const t = useCallback((key: TranslationKey, ...args: any[]): string => {
-        const langDict = translations[language] || translations.en;
-        const template = langDict[key];
-
-        if (typeof template === 'function') {
-            // @ts-ignore
-            return template(...args);
-        }
-        return template as string;
+    React.useEffect(() => {
+        i18n.changeLanguage(language);
     }, [language]);
 
     return (
-        <LanguageContext.Provider value={{ language, toggleLanguage, t }}>
+        <I18nextProvider i18n={i18n}>
             {children}
-        </LanguageContext.Provider>
+        </I18nextProvider>
     );
 };
 
 export const useTranslation = () => {
-    const context = useContext(LanguageContext);
-    if (context === undefined) {
-        throw new Error('useTranslation must be used within a LanguageProvider');
-    }
-    return context;
-};
+    const { t } = useTranslationi18next();
+    const { language, setLanguage } = useStore();
+
+    const toggleLanguage = () => {
+        const newLang = language === 'en' ? 'zh' : 'en';
+        setLanguage(newLang);
+    };
+
+    return { t, toggleLanguage, language };
+}
