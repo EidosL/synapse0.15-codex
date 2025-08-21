@@ -7,7 +7,8 @@ import { type Tier, policyFor } from '../insight/budget';
 import { pickEvidenceSubmodular, type Frag } from '../insight/evidencePicker';
 import { capFragmentsByBudget, estTokens } from '../insight/tokenGovernor';
 import { counterInsightCheck } from '../insight/counterInsight';
-import { computeSignals, shouldEscalate } from '../insight/signals';
+import { computeSignals } from '../insight/signals';
+import { shouldDeepen } from '../insight/depthController';
 import { logMetrics } from '../insight/logging';
 
 
@@ -530,7 +531,7 @@ export const findSynapticLink = async (
                 latencyMs: Date.now() - startTime
             });
 
-            if (!shouldEscalate(sig, est.tokens, est.llmCalls)) {
+            if (!shouldDeepen(cycle, sig, budget)) {
                 break;
             }
         }
