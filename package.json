@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:memory": "tsx src/demo/example.ts",
+    "dev:langextract": "tsx src/agentic/examples/run-langextract-demo.ts",
     "build": "vite build",
     "preview": "vite preview",
     "test": "tsx --test src/**/*.test.ts"
@@ -18,6 +19,7 @@
     "react-dom": "^19.1.1",
     "react-i18next": "^15.7.0",
     "serpapi": "^2.2.1",
+    "node-fetch": "^3.3.2",
     "zod": "^3.23.8",
     "zustand": "^5.0.8"
   },
