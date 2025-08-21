@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { Note, Insight, InsightThinkingProcess, ParentChunk, SearchDepth, Hypothesis, EurekaMarkers, SerendipityInfo } from './types';
 import type { VectorStore } from './vectorStore';
 import type { Language, translations } from '../context/LanguageProvider';
-import { type Tier, policyFor } from '../insight/budget';
+import { type Tier, policyFor, Budget } from '../insight/budget';
 import { pickEvidenceSubmodular, type Frag } from '../insight/evidencePicker';
 import { capFragmentsByBudget, estTokens } from '../insight/tokenGovernor';
 import { counterInsightCheck } from '../insight/counterInsight';
@@ -101,12 +101,14 @@ Document Content:\n---\n${text.slice(0, 20000)}\n---\nReturn ONLY the JSON array
 
     try {
         const response = await ai.models.generateContent({
-            model: MODEL_NAME, contents: prompt, config: {
+            model: MODEL_NAME,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: {
                 responseMimeType: 'application/json',
                 responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
             }
         });
-        const chunks = safeParseGeminiJson<string[]>(response.text);
+        const chunks = safeParseGeminiJson<string[]>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
         return buildStructure((chunks && chunks.length > 0) ? chunks : [text]);
     } catch (error) {
         console.error("Semantic chunking failed:", error);
@@ -117,22 +119,21 @@ Document Content:\n---\n${text.slice(0, 20000)}\n---\nReturn ONLY the JSON array
 
 export const generateBatchEmbeddings = async (texts: string[]): Promise<number[][]> => {
     if (!ai || texts.length === 0) return texts.map(() => []);
-    try {
-        const res = await ai.models.embedContent({ model: EMBEDDING_MODEL_NAME, contents: texts });
-        if (!res?.embeddings || res.embeddings.length !== texts.length) throw new Error('Mismatched embedding count');
-        return res.embeddings.map(e => e.values);
-    } catch (error) {
-        console.warn("Batch embedding failed, using micro-batch fallback:", error);
-        // CRITICAL FIX: Use Array.from to create new arrays, not references to the same array.
-        const out: number[][] = Array.from({length: texts.length}, () => []);
-        for (let i = 0; i < texts.length; i += 100) {
-            try {
-                 const chunkRes = await ai.models.embedContent({ model: EMBEDDING_MODEL_NAME, contents: texts.slice(i, i + 100) });
-                 if (chunkRes?.embeddings) chunkRes.embeddings.forEach((v, k) => out[i+k] = v.values);
-            } catch (innerError) { console.error(`Error in micro-batch at index ${i}`, innerError); }
+    const out: number[][] = Array.from({ length: texts.length }, () => []);
+    for (let i = 0; i < texts.length; i++) {
+        try {
+            const res = await ai.models.embedContent({
+                model: EMBEDDING_MODEL_NAME,
+                contents: [{ role: 'user', parts: [{ text: texts[i] }] }]
+            });
+            if (res.embeddings && res.embeddings[0] && res.embeddings[0].values) {
+                out[i] = res.embeddings[0].values;
+            }
+        } catch (innerError) {
+            console.error(`Error embedding text at index ${i}`, innerError);
         }
-        return out;
     }
+    return out;
 };
 
 // --- New Insight Generation Engine (based on "The Architecture of Insight") ---
@@ -237,7 +238,7 @@ ${evidenceChunks.map(c => `[${c.noteId}::${c.childId}] ${c.text}`).join('\n')}
     try {
         const response = await ai.models.generateContent({
             model: MODEL_NAME,
-            contents: prompt,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
             config: {
                 responseMimeType: 'application/json',
                 // @ts-ignore
@@ -245,7 +246,7 @@ ${evidenceChunks.map(c => `[${c.noteId}::${c.childId}] ${c.text}`).join('\n')}
                 temperature
             }
         });
-        const result = safeParseGeminiJson<InsightPayload>(response.text);
+        const result = safeParseGeminiJson<InsightPayload>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
         if (result && result.mode !== 'none') {
             // Precise quote validation
             const chunkMap = new Map<string, string>();
@@ -281,12 +282,17 @@ const generateSearchQueries = async (note: Note, budget: Budget): Promise<string
     try {
         const response = await ai.models.generateContent({
             model: MODEL_NAME,
-            contents: `Return JSON with ANY subset of keys: ${RELATIONS.join(', ')}. Each value must be a concise search query derived from:\nTitle: ${note.title}\nContent: ${note.content.slice(0, 1000)}`,
-            config: { responseMimeType: "application/json", responseSchema: {
-                type: Type.OBJECT, properties: RELATIONS.reduce((acc, key) => ({ ...acc, [key]: { type: Type.STRING } }), {}), required: []
-            }}
+            contents: [{ role: 'user', parts: [{ text: `Return JSON with ANY subset of keys: ${RELATIONS.join(', ')}. Each value must be a concise search query derived from:\nTitle: ${note.title ?? ''}\nContent: ${note.content.slice(0, 1000)}` }] }],
+            config: {
+                responseMimeType: "application/json", responseSchema: {
+                    type: Type.OBJECT, properties: RELATIONS.reduce((acc: { [key: string]: { type: Type.STRING } }, key) => {
+                        acc[key] = { type: Type.STRING };
+                        return acc;
+                    }, {}), required: []
+                }
+            }
         });
-        const obj = safeParseGeminiJson<Record<string, string>>(response.text) || {};
+        const obj = safeParseGeminiJson<Record<string, string>>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '') || {};
         return Array.from(new Set([...Object.values(obj).filter(Boolean), ...Object.values(cheap)])).slice(0, budget.maxQueries);
     } catch (error) {
         console.error("Error generating search queries, using fallback:", error);
@@ -329,7 +335,7 @@ const retrieveCandidateNotesHQ = async (queries: string[], vectorStore: VectorSt
   const queryEmbeddings = await generateBatchEmbeddings(queries);
 
   queryEmbeddings.forEach(embedding => {
-      if (embedding.length > 0) {
+      if (embedding && embedding.length > 0) {
           const matches = vectorStore.findNearest(embedding, perQueryK, newNoteId);
           vecLists.push([...new Set(matches.map(m => m.parentChunkId.split(':')[0]))]);
       }
@@ -356,12 +362,16 @@ Generate a JSON array of 2 new, diverse search queries to overcome this failure.
 - Q2: Query for an analogy from a distant domain (e.g., biology, economics, physics) to reframe the problem.
 Return ONLY the JSON array of strings.`;
     try {
-        const response = await ai.models.generateContent({ model: MODEL_NAME, contents: prompt, config: {
-            responseMimeType: "application/json",
-            responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } },
-            temperature: budget.tempProbe
-        }});
-        return safeParseGeminiJson<string[]>(response.text) || [];
+        const response = await ai.models.generateContent({
+            model: MODEL_NAME,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } },
+                temperature: budget.tempProbe
+            }
+        });
+        return safeParseGeminiJson<string[]>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '') || [];
     } catch (e) {
         console.error("Self-probing failed:", e);
         return [];
@@ -413,7 +423,7 @@ const runSynthesisAndRanking = async (
         return insight;
     });
 
-    const insights = (await Promise.all(insightPromises)).filter((i): i is InsightPayload => i !== null);
+    const insights = (await Promise.all(insightPromises)).filter((i): i is InsightPayload => !!i);
     if (insights.length === 0) return { results: [], candIds: candNotes.map(c => c.id) };
 
     setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingRanking')] }));
@@ -508,7 +518,7 @@ export const findSynapticLink = async (
         if (cycle < budget.maxCycles) {
             const topResult = memoryWorkspace.bestResults[0];
             const evTexts = topResult?.evidenceRefs.map(r => r.quote) ?? [];
-            const candidateScores = memoryWorkspace.bestResults.map(r => r.confidence);
+            const candidateScores = memoryWorkspace.bestResults.map(r => r.confidence ?? 0);
 
             const sig = computeSignals({
                 queries: Array.from(memoryWorkspace.probes),
