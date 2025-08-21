@@ -513,11 +513,6 @@ export const findSynapticLink = async (
                 llmCalls: 1
             };
 
-            const est = {
-                tokens: evTexts.reduce((a, b) => a + estTokens(b), 0),
-                llmCalls: 1
-            };
-
             logMetrics({
                 tier,
                 depthCycles: cycle,
