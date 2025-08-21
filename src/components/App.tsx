@@ -5,6 +5,7 @@ import { useStoredState } from '../hooks/useStoredState';
 import { VectorStore } from '../lib/vectorStore';
 import { ai, generateBatchEmbeddings, findSynapticLink, semanticChunker } from '../lib/ai';
 import type { Note, Insight, SearchDepth } from '../lib/types';
+import type { Tier } from '../insight/budget';
 
 import { NoteEditor } from './NoteEditor';
 import { NoteViewer } from './NoteViewer';
@@ -32,6 +33,10 @@ export const App: React.FC = () => {
 
     const { language, toggleLanguage, t } = useTranslation();
 
+    const depthToTier = (depth: SearchDepth): Tier => {
+        if (depth === 'deep') return 'pro';
+        return 'free';
+    };
 
     useEffect(() => {
         const indexExistingNotes = async () => {
@@ -121,7 +126,7 @@ export const App: React.FC = () => {
         const existingNotes = [...notes];
         setNotes(prevNotes => [...prevNotes, newNote]);
 
-        const links = await findSynapticLink(newNote, existingNotes, setLoadingState, vectorStore.current, language, t, searchDepth);
+        const links = await findSynapticLink(newNote, existingNotes, setLoadingState, vectorStore.current, language, t, depthToTier(searchDepth));
         if (links.length > 0) {
             const newInsights: Insight[] = links.map((link, i) => ({
                 ...link,
@@ -210,7 +215,7 @@ export const App: React.FC = () => {
             setLoadingState(prev => ({ ...prev, messages: [t('findingConnectionsFor', noteToProcess.title)] }));
             
             const existingNotesForLinkFinding = notes;
-            const links = await findSynapticLink(noteToProcess, existingNotesForLinkFinding, setLoadingState, vectorStore.current, language, t, searchDepth);
+            const links = await findSynapticLink(noteToProcess, existingNotesForLinkFinding, setLoadingState, vectorStore.current, language, t, depthToTier(searchDepth));
 
             if (links.length > 0) {
                  const newInsights: Insight[] = links.map((link, i) => ({
@@ -236,7 +241,7 @@ export const App: React.FC = () => {
         setLoadingState({ active: true, messages: [t('findingConnectionsFor', noteToProcess.title)] });
 
         const existingNotes = notes.filter(n => n.id !== noteId);
-        const links = await findSynapticLink(noteToProcess, existingNotes, setLoadingState, vectorStore.current, language, t, searchDepth);
+        const links = await findSynapticLink(noteToProcess, existingNotes, setLoadingState, vectorStore.current, language, t, depthToTier(searchDepth));
 
         if (links.length > 0) {
             const newInsights: Insight[] = links.map((link, i) => ({
