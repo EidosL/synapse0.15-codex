@@ -10,11 +10,13 @@ import { counterInsightCheck } from '../insight/counterInsight';
 import { computeSignals } from '../insight/signals';
 import { shouldDeepen } from '../insight/depthController';
 import { logMetrics } from '../insight/logging';
+import { rerankLocal } from '../insight/reranker';
 
 
 // --- API & AI ---
 export const MODEL_NAME = 'gemini-2.5-flash';
 export const EMBEDDING_MODEL_NAME = 'text-embedding-004';
+const ENABLE_LOCAL_RERANK = process.env.ENABLE_LOCAL_RERANK === '1';
 
 let aiInstance: GoogleGenAI | null = null;
 if (process.env.API_KEY) {
@@ -393,6 +395,11 @@ const runSynthesisAndRanking = async (
         const queryText = (searchQueries.join(' ') || newNote.title || '').slice(0, 600);
 
         let picked = pickEvidenceSubmodular(pool, queryText, budget.maxFragments);
+        if (ENABLE_LOCAL_RERANK) {
+            const pairs = picked.map(p => ({ query: queryText, text: p.text, meta: p }));
+            const reranked = await rerankLocal(pairs, budget.maxFragments);
+            picked = reranked.map(r => r.meta as Frag);
+        }
         picked = capFragmentsByBudget(picked, budget.contextCapChars);
 
         const evidenceChunks = picked.map(p => ({ noteId: p.noteId, childId: p.childId, text: p.text }));
