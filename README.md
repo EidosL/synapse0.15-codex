@@ -45,9 +45,10 @@ Synapse uses a combination of techniques to find connections between your notes:
     npm install
     ```
 3.  **Set up your environment variables:**
-    Create a file named `.env.local` in the root of the project and add your Gemini API key. This file is not checked into version control, so your API key will remain private.
+    Create a file named `.env.local` in the root of the project and add your Gemini API key and [SerpAPI](https://serpapi.com/) key for web search. This file is not checked into version control, so your keys will remain private.
     ```
     GEMINI_API_KEY=your_api_key
+    SERPAPI_API_KEY=your_serpapi_key
     ```
 4.  **Run the app:**
     ```bash
