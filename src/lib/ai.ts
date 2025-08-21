@@ -3,6 +3,13 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { Note, Insight, InsightThinkingProcess, ParentChunk, SearchDepth, Hypothesis, EurekaMarkers, SerendipityInfo } from './types';
 import type { VectorStore } from './vectorStore';
 import type { Language, translations } from '../context/LanguageProvider';
+import { type Tier, policyFor } from '../insight/budget';
+import { pickEvidenceSubmodular, type Frag } from '../insight/evidencePicker';
+import { capFragmentsByBudget, estTokens } from '../insight/tokenGovernor';
+import { counterInsightCheck } from '../insight/counterInsight';
+import { computeSignals, shouldEscalate } from '../insight/signals';
+import { logMetrics } from '../insight/logging';
+
 
 // --- API & AI ---
 export const MODEL_NAME = 'gemini-2.5-flash';
@@ -256,33 +263,6 @@ ${evidenceChunks.map(c => `[${c.noteId}::${c.childId}] ${c.text}`).join('\n')}
 
 // --- RAG PIPELINE ---
 
-// --- Tiered Budgets for Cost Control ---
-type Tier = 'free'|'pro';
-type Budget = {
-  maxQueries: number;
-  perQueryK: number;
-  finalK: number;
-  maxFragments: number;
-  maxCycles: number;
-  tempProbe: number;
-  tempInsight: number;
-};
-
-const TIERS: Record<Tier, Budget> = {
-  free: { maxQueries: 4, perQueryK: 5, finalK: 4, maxFragments: 12, maxCycles: 1, tempProbe: 0.2, tempInsight: 0.2 },
-  pro:  { maxQueries: 10, perQueryK: 12, finalK: 8, maxFragments: 24, maxCycles: 3, tempProbe: 0.7, tempInsight: 0.5 }
-};
-
-const getBudgetForDepth = (depth: SearchDepth): Budget => {
-    switch (depth) {
-        case 'quick': return TIERS.free;
-        case 'contextual': return TIERS.free;
-        case 'deep': return TIERS.pro;
-        default: return TIERS.free;
-    }
-};
-
-
 const RELATIONS = ['Contradiction', 'PracticalApplication', 'HistoricalAnalogy', 'ProblemToSolution', 'DeepSimilarity', 'Mechanism', 'Boundary', 'TradeOff'] as const;
 const cheapExpandQueries = (topic: string) => ({
   Contradiction: `${topic} limitation counterexample`, PracticalApplication: `${topic} how to apply implementation`,
@@ -385,59 +365,6 @@ Return ONLY the JSON array of strings.`;
     }
 };
 
-const JACCARD = (a:string, b:string) => {
-  const A = new Set(a.toLowerCase().split(/\W+/).filter(Boolean));
-  const B = new Set(b.toLowerCase().split(/\W+/).filter(Boolean));
-  if (A.size === 0 && B.size === 0) return 1.0;
-  const inter = [...A].filter(x=>B.has(x)).length;
-  return inter / Math.max(1, A.size + B.size - inter);
-};
-
-const selectTopEvidenceChunks = (
-  newNote: Note,
-  candNote: Note,
-  queries: string[],
-  maxChunks: number = 16
-): {noteId: string, childId: string, text: string}[] => {
-    const queryTerms = new Set(queries.flatMap(tokenize));
-    const scoreChunk = (text: string): number => {
-        return tokenize(text).reduce((score, word) => score + (queryTerms.has(word) ? 1 : 0), 0);
-    };
-    
-    const capText = (s:string, n=240) => s.length>n ? s.slice(0,n-1)+'…' : s;
-
-    const toFrags = (n: Note) =>
-      n.parentChunks?.flatMap(pc =>
-        pc.children.map(c => ({
-          noteId: n.id,
-          parentId: pc.id,
-          childId: `${pc.id}::${c.id}`, // Use :: to avoid hyphen collisions
-          text: c.text,
-          score: scoreChunk(c.text)
-        }))
-      ) ?? [];
-
-    const pool = [...toFrags(newNote), ...toFrags(candNote)].sort((a,b)=> b.score - a.score);
-
-    const out: typeof pool = [];
-    const perNoteCap = Math.max(4, Math.ceil(maxChunks / 2.5));
-    const usedByNote = new Map<string, number>();
-
-    for (const f of pool) {
-        if (out.length >= maxChunks) break;
-        const used = usedByNote.get(f.noteId) ?? 0;
-        if (used >= perNoteCap) continue;
-
-        if (out.some(x => JACCARD(x.text, f.text) > 0.8)) continue;
-
-        out.push(f);
-        usedByNote.set(f.noteId, used + 1);
-    }
-    
-    return out.map(({noteId, childId, text}) => ({noteId, childId, text: capText(text)}));
-};
-
-
 const runSynthesisAndRanking = async (
     newNote: Note,
     candNotes: Note[],
@@ -451,9 +378,31 @@ const runSynthesisAndRanking = async (
 
     setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingSynthesizing', candNotes.length)] }));
     
-    const insightPromises = candNotes.map(candNote => {
-        const evidenceChunks = selectTopEvidenceChunks(newNote, candNote, searchQueries, budget.maxFragments);
-        return generateInsight(evidenceChunks, language, budget.tempInsight);
+    const insightPromises = candNotes.map(async (candNote) => {
+        const mkPool = (note: Note): Frag[] =>
+            note.parentChunks?.flatMap(pc => pc.children.map(c => ({
+                noteId: note.id,
+                parentId: pc.id,
+                childId: `${pc.id}::${c.id}`,
+                text: c.text,
+                tokens: estTokens(c.text)
+            }))) ?? [];
+
+        const pool = [...mkPool(newNote), ...mkPool(candNote)];
+        const queryText = (searchQueries.join(' ') || newNote.title || '').slice(0, 600);
+
+        let picked = pickEvidenceSubmodular(pool, queryText, budget.maxFragments);
+        picked = capFragmentsByBudget(picked, budget.contextCapChars);
+
+        const evidenceChunks = picked.map(p => ({ noteId: p.noteId, childId: p.childId, text: p.text }));
+
+        const insight = await generateInsight(evidenceChunks, language, budget.tempInsight);
+
+        if (insight) {
+            const ctr = await counterInsightCheck(insight.insightCore, evidenceChunks);
+            (insight as any).__counter = ctr;
+        }
+        return insight;
     });
 
     const insights = (await Promise.all(insightPromises)).filter((i): i is InsightPayload => i !== null);
@@ -466,7 +415,9 @@ const runSynthesisAndRanking = async (
         const surprise = insight.bayesianSurprise;
         const diversity = new Set(insight.evidenceRefs.map(e => e.childId.split('::')[0])).size;
         
-        const score = 0.45 * conviction + 0.25 * fluency + 0.2 * surprise + 0.1 * Math.tanh(diversity/6);
+        const ctr = (insight as any).__counter as { severity?: number } | undefined;
+        const penalty = ctr?.severity ? (0.25 * Math.min(1, ctr.severity)) : 0;
+        const score = 0.45 * conviction + 0.25 * fluency + 0.20 * surprise + 0.10 * Math.tanh(diversity/6) - penalty;
         return { insight, oldNoteId: candNotes[i].id, score };
     });
     
@@ -492,19 +443,20 @@ const runSynthesisAndRanking = async (
 };
 
 export const findSynapticLink = async (
-    newNote: Note, existingNotes: Note[], setLoadingState: SetLoadingState, vectorStore: VectorStore,
-    language: Language = 'en', t: TFunction, depth: SearchDepth = 'contextual'
+    newNote: Note, existingNotes: Note[], setLoadingState: Dispatch<SetStateAction<LoadingState>>, vectorStore: VectorStore,
+    language: Language = 'en', t: TFunction, tier: Tier = 'pro'
 ): Promise<InsightResult[]> => {
     if (existingNotes.length === 0) return [];
 
-    const budget = getBudgetForDepth(depth);
+    const startTime = Date.now();
+    const budget = policyFor(tier);
 
     let memoryWorkspace = {
         probes: new Set<string>(), retrievedNoteIds: new Set<string>(),
         bestResults: [] as InsightResult[], impasseReason: "Initial search."
     };
-
-    for (let cycle = 1; cycle <= budget.maxCycles; cycle++) {
+    let cycle = 0;
+    for (cycle = 1; cycle <= budget.maxCycles; cycle++) {
         let currentQueries: string[];
         if (cycle === 1) {
             setLoadingState({ active: true, messages: [t('thinkingBrainstorming')] });
@@ -544,6 +496,44 @@ export const findSynapticLink = async (
         if (topConfidence > 0.85 && cycle === 1) break; // Early exit on high confidence in first cycle
 
         memoryWorkspace.impasseReason = `Best connection has conviction of only ${(topConfidence * 100).toFixed(0)}%. It may lack a clear mechanism or predictive power.`;
+
+        if (cycle < budget.maxCycles) {
+            const topResult = memoryWorkspace.bestResults[0];
+            const evTexts = topResult?.evidenceRefs.map(r => r.quote) ?? [];
+            const candidateScores = memoryWorkspace.bestResults.map(r => r.confidence);
+
+            const sig = computeSignals({
+                queries: Array.from(memoryWorkspace.probes),
+                candidateScores,
+                evidenceTexts: evTexts
+            });
+
+            const est = {
+                tokens: evTexts.reduce((a, b) => a + estTokens(b), 0),
+                llmCalls: 1
+            };
+
+            const est = {
+                tokens: evTexts.reduce((a, b) => a + estTokens(b), 0),
+                llmCalls: 1
+            };
+
+            logMetrics({
+                tier,
+                depthCycles: cycle,
+                tokensEstimated: est.tokens,
+                llmCalls: candNotes.length,
+                candidateNotes: candNotes.length,
+                evidenceSnippets: topResult?.evidenceRefs.length ?? 0,
+                signals: sig,
+                mode: topResult?.mode,
+                latencyMs: Date.now() - startTime
+            });
+
+            if (!shouldEscalate(sig, est.tokens, est.llmCalls)) {
+                break;
+            }
+        }
     }
 
     memoryWorkspace.bestResults.forEach(r => {
