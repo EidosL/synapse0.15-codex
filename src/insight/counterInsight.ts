@@ -35,11 +35,16 @@ ${evidence.map(e => `[${e.noteId}::${e.childId}] ${e.text}`).join('\n')}
 `;
   const res = await ai.models.generateContent({
     model: MODEL_NAME,
-    contents: [{role: 'user', parts: [{text: prompt}]}],
-    generationConfig: { responseMimeType:'application/json', temperature: 0.1 },
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: COUNTER_SCHEMA,
+      temperature: 0.1,
+    },
     safetySettings: [],
   });
-  // The user-provided code used `res.text` and a custom parser.
-  // The Gemini API response is more complex. I'll adapt to parse the JSON from the response.
-  return safeParseGeminiJson<CounterOut>(res.response.candidates[0].content.parts[0].text);
+  const parsed = safeParseGeminiJson<CounterOut>(
+    res.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+  );
+  return parsed;
 }
