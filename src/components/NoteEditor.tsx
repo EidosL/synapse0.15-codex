@@ -1,15 +1,18 @@
 import React, { useState } from 'react';
 import { useTranslation } from '../context/LanguageProvider';
+import { useStore } from '../lib/store';
 
 export const NoteEditor: React.FC<{ onSave: (title: string, content: string) => void; onClose: () => void; }> = ({ onSave, onClose }) => {
     const [title, setTitle] = useState('');
     const [content, setContent] = useState('');
     const { t } = useTranslation();
+    const { handleSaveNote, setIsEditing } = useStore();
 
     const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         if (title.trim() && content.trim()) {
-            onSave(title.trim(), content.trim());
+            handleSaveNote(title.trim(), content.trim());
+            onClose();
         }
     };
 

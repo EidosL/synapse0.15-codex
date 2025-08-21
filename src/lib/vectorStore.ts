@@ -1,4 +1,4 @@
-export class VectorStore {
+class VectorStore {
     private vectors: Map<string, number[]> = new Map();
     // Map of child chunk ID to its parent chunk ID (e.g., noteId:pIndex)
     private childToParent: Map<string, string> = new Map();
@@ -71,3 +71,9 @@ export class VectorStore {
         });
     }
 }
+
+const vectorStoreInstance = new VectorStore();
+
+export const getVectorStore = () => {
+    return vectorStoreInstance;
+};
