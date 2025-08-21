@@ -11,6 +11,7 @@ import { computeSignals } from '../insight/signals';
 import { shouldDeepen } from '../insight/depthController';
 import { logMetrics } from '../insight/logging';
 import { rerankLocal } from '../insight/reranker';
+import { maybeAutoDeepen } from '../agentic/autoController';
 
 
 // --- API & AI ---
@@ -508,6 +509,26 @@ export const findSynapticLink = async (
             combined.sort((a,b) => (b.confidence ?? 0) - (a.confidence ?? 0));
             const uniqueResults = Array.from(new Map(combined.map(r => [r.oldNoteId, r])).values());
             memoryWorkspace.bestResults = uniqueResults.slice(0,3);
+        }
+
+        if (tier === 'pro' && memoryWorkspace.bestResults[0]) {
+            const agentic = await maybeAutoDeepen(memoryWorkspace.bestResults[0], setLoadingState, t, language, budget);
+            if (agentic) {
+                let refined = memoryWorkspace.bestResults[0];
+                if (agentic.result) {
+                    refined = { ...refined, ...agentic.result } as InsightResult;
+                    memoryWorkspace.bestResults[0] = refined;
+                }
+                if (agentic.transcript || agentic.summary) {
+                    refined.thinkingProcess = (refined.thinkingProcess || {}) as InsightThinkingProcess;
+                    if (agentic.transcript) {
+                        refined.thinkingProcess.agenticTranscript = agentic.transcript;
+                    }
+                    if (agentic.summary) {
+                        refined.thinkingProcess.refinementSummary = agentic.summary;
+                    }
+                }
+            }
         }
 
         const topConfidence = memoryWorkspace.bestResults[0]?.confidence ?? 0;

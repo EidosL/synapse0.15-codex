@@ -31,6 +31,8 @@ export interface InsightThinkingProcess {
     rankingRationale?: string;
     cycleNumber?: number;
     impasseReason?: string;
+    agenticTranscript?: string;
+    refinementSummary?: string;
 }
 
 // --- New Insight Structure based on "The Architecture of Insight" ---
