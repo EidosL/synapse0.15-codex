@@ -17,3 +17,18 @@ export const TIERS: Record<Tier, Budget> = {
 };
 
 export const policyFor = (tier: Tier) => TIERS[tier];
+
+// New: adapt tier policy using uncertainty/novelty signals (best-effort typing)
+export type SignalSnapshot = { uncertainty?: number; novelty?: number; thinEvidence?: boolean } & Record<string, any>;
+
+export const deriveBudget = (tier: Tier, s: SignalSnapshot): Budget => {
+  const base = { ...TIERS[tier] };
+  const u = s.uncertainty ?? 0;             // 0..1
+  const thin = !!s.thinEvidence;
+  // scale queries & cycles up with uncertainty; keep caps modest to control cost
+  base.maxQueries = Math.min(TIERS[tier].maxQueries, Math.max(3, Math.round(3 + u * 7)));
+  base.maxCycles  = Math.min(TIERS[tier].maxCycles, 1 + (u > 0.6 ? 2 : u > 0.3 ? 1 : 0));
+  // if evidence is thin, allow one extra pass and more fragments
+  if (thin) { base.maxFragments = Math.min(base.maxFragments + 6, TIERS[tier].maxFragments + 6); }
+  return base;
+};

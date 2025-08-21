@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { Note, Insight, InsightThinkingProcess, ParentChunk, SearchDepth, Hypothesis, EurekaMarkers, SerendipityInfo } from './types';
 import type { VectorStore } from './vectorStore';
 import type { Language, translations } from '../context/LanguageProvider';
-import { type Tier, policyFor, Budget } from '../insight/budget';
+import { type Tier, policyFor, deriveBudget, Budget } from '../insight/budget';
 import { pickEvidenceSubmodular, type Frag } from '../insight/evidencePicker';
 import { capFragmentsByBudget, estTokens } from '../insight/tokenGovernor';
 import { counterInsightCheck } from '../insight/counterInsight';
@@ -14,6 +14,7 @@ import { rerankLocal } from '../insight/reranker';
 import { maybeAutoDeepen } from '../agentic/autoController';
 import { searchWeb } from '../agentic/adapters/searchWeb';
 import { mindMapTool } from '../agentic/adapters/mindMapTool';
+import { verifyCandidates } from '../insight/verifier';
 
 
 // --- API & AI ---
@@ -471,21 +472,61 @@ async function postProcessWithAgentic({
   if (tier !== 'pro' || !results?.length) return results;
 
   const top = results[0];
+
+  // 1) signals
   const evidenceTexts = (top.evidenceRefs || []).map((e:any)=> e.quote).filter(Boolean);
+  const signals = computeSignals({
+      queries: top.thinkingProcess?.searchQueries || [],
+      candidateScores: results.map(r => r.confidence ?? 0),
+      evidenceTexts
+  });
+
+  // 2) adaptive budget
+  const budget = deriveBudget(tier, signals);
+
+  // 3) maybe deepen using existing controller
   const transcript = await maybeAutoDeepen({
-    tier: 'pro',
+    tier,
     topic: newNote.title || newNote.content.slice(0,120),
     insightCore: top.insightCore || 'Candidate insight',
     evidenceTexts,
     tools: { web: searchWeb, mind: mindMapTool() },
-    hooks: { onLog: console.debug, onTool: console.debug }
+    hooks: { onLog: console.debug, onTool: console.debug },
+    budget
   });
 
   if (transcript) {
-    top.insightCore = `${top.insightCore} — refined via agentic research`;
     top.thinkingProcess = top.thinkingProcess || {};
     top.thinkingProcess.agenticTranscript = transcript;
   }
+
+  // 4) enumerate candidate answers
+  const candidates = (top.hypotheses || []).map(h => ({ text: h.statement, prior: h.prior }));
+  candidates.unshift({ text: top.insightCore });
+
+  // 5) grounded verification
+  const q = newNote.title || newNote.content.slice(0, 120);
+  const verdicts = await verifyCandidates(q, candidates, 3);
+
+  // 6) choose final based on supported verdicts; attach citations
+  const supported = verdicts.find(v => v.verdict === 'supported') ?? verdicts[0];
+
+  if (supported) {
+    let newInsightCore = supported.candidate.text;
+    if (transcript) {
+      newInsightCore += ' — refined via agentic research';
+    }
+    top.insightCore = newInsightCore;
+    top.thinkingProcess = top.thinkingProcess || {};
+    top.thinkingProcess.verification = supported;
+    if (supported.verdict === 'supported') {
+      top.confidence = Math.max(top.confidence ?? 0, 0.85);
+    }
+  } else if (transcript) {
+    // if no supported verdict, but we have a transcript, we should still update the core
+    top.insightCore += ' — refined via agentic research';
+  }
+
   return results;
 }
 
