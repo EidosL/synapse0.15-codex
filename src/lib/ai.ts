@@ -522,7 +522,7 @@ export const findSynapticLink = async (
                 tier,
                 depthCycles: cycle,
                 tokensEstimated: est.tokens,
-                llmCalls: candNotes.length,
+                llmCalls: est.llmCalls,
                 candidateNotes: candNotes.length,
                 evidenceSnippets: topResult?.evidenceRefs.length ?? 0,
                 signals: sig,
