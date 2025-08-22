@@ -12,11 +12,12 @@ export type Budget = {
   maxWildcards: number;   // inject N random notes to retrieval
   enableMultiHop: boolean;// allow chaining insights
   maxAgenticRefinementsPerRun: number; // max agentic calls per run
+  enableSelfEvolution: boolean; // allow multi-variant merging
 };
 
 export const TIERS: Record<Tier, Budget> = {
-  free: { maxQueries: 4,  perQueryK: 5,  finalK: 4,  maxFragments: 12, maxCycles: 1, tempProbe: 0.2, tempInsight: 0.2, contextCapChars: 3500, maxWildcards: 0, enableMultiHop: false, maxAgenticRefinementsPerRun: 0 },
-  pro:  { maxQueries: 10, perQueryK: 12, finalK: 8,  maxFragments: 24, maxCycles: 3, tempProbe: 0.7, tempInsight: 0.5, contextCapChars: 4500, maxWildcards: 1, enableMultiHop: true, maxAgenticRefinementsPerRun: 1 }
+  free: { maxQueries: 4,  perQueryK: 5,  finalK: 4,  maxFragments: 12, maxCycles: 1, tempProbe: 0.2, tempInsight: 0.2, contextCapChars: 3500, maxWildcards: 0, enableMultiHop: false, maxAgenticRefinementsPerRun: 0, enableSelfEvolution: false },
+  pro:  { maxQueries: 10, perQueryK: 12, finalK: 8,  maxFragments: 24, maxCycles: 3, tempProbe: 0.7, tempInsight: 0.5, contextCapChars: 4500, maxWildcards: 1, enableMultiHop: true, maxAgenticRefinementsPerRun: 1, enableSelfEvolution: true }
 };
 
 export const policyFor = (tier: Tier) => TIERS[tier];
