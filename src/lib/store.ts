@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import * as pdfjsLib from 'https://esm.sh/pdfjs-dist@4.5.136';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import {
     semanticChunker,
     generateBatchEmbeddings,
@@ -26,6 +26,8 @@ type AppState = {
     searchDepth: SearchDepth;
     newInsightCount: number;
     language: 'en' | 'zh';
+    novelty_scores: number[];
+    insight_notes: string[];
 
     // Actions
     setActiveTab: (tab: 'vault' | 'inbox') => void;
@@ -54,6 +56,8 @@ export const useStore = create<AppState>()(
             searchDepth: 'contextual',
             newInsightCount: 0,
             language: 'en',
+            novelty_scores: [],
+            insight_notes: [],
 
             // Actions
             setActiveTab: (tab) => set({ activeTab: tab }),

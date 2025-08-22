@@ -8,7 +8,8 @@ export const runSelfEvolution = async (finalDraft: string, language: Language): 
     const focuses = [
         "highlighting technical depth and specific evidence, creating a rigorous, academic tone",
         "emphasizing broad connections and analogies to other fields, creating a creative, lateral-thinking tone",
-        "focusing on practical implications and actionable outcomes, creating a pragmatic, business-oriented tone"
+        "focusing on practical implications and actionable outcomes, creating a pragmatic, business-oriented tone",
+        "drawing an analogy between the draft's topic and a concept from a completely different field (e.g., biology, physics, history), and explaining how this analogy provides new insights"
     ];
     let variants: string[] = [];
     for (const focus of focuses) {

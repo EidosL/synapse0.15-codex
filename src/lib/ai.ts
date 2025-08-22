@@ -15,9 +15,12 @@ import { maybeAutoDeepen } from '../agentic/autoController';
 import { searchWeb } from '../agentic/adapters/searchWeb';
 import { mindMapTool } from '../agentic/adapters/mindMapTool';
 import { verifyCandidates } from '../insight/verifier';
+import { useStore } from './store';
 import { useLogStore } from './logStore';
 import type { ToolResult } from '../agentic/types';
 import { runSelfEvolution } from './evolution';
+import { generateDivergentQuestion } from '../insight/questionGenerator';
+import { evaluateNovelty } from '../insight/noveltyEvaluator';
 
 
 // --- API & AI ---
@@ -35,7 +38,7 @@ if (process.env.API_KEY) {
 export const ai = aiInstance;
 
 // This should only be used for free-text generation, not for JSON mode.
-const CHINESE_OUTPUT_INSTRUCTION = "\n\nCRITICAL: You MUST respond exclusively in Simplified Chinese.";
+export const CHINESE_OUTPUT_INSTRUCTION = "\n\nCRITICAL: You MUST respond exclusively in Simplified Chinese.";
 
 export const safeParseGeminiJson = <T,>(text: string): T | null => {
     const jsonText = text.trim();
@@ -830,6 +833,7 @@ export const findSynapticLink = async (
         bestResults: [] as InsightResult[], impasseReason: "Initial search.",
         agenticRefinements: 0,
         currentDraft: null as string | null,
+        hasHighNoveltyInsight: false,
     };
 
     memoryWorkspace.currentDraft = await generateInitialDraft(newNote, language);
@@ -849,7 +853,16 @@ export const findSynapticLink = async (
             setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingReflecting')] }));
             if (memoryWorkspace.currentDraft) {
                 hooks.onLog?.('Analyzing draft for knowledge gaps to drive next search cycle...');
-                currentQueries = await analyzeDraftForGaps(memoryWorkspace.currentDraft, newNote.title || newNote.content.slice(0,120), Array.from(memoryWorkspace.probes), budget);
+                const gapQueries = await analyzeDraftForGaps(memoryWorkspace.currentDraft, newNote.title || newNote.content.slice(0,120), Array.from(memoryWorkspace.probes), budget);
+
+                // Add a divergent question to spark creativity
+                const divergentQuestion = await generateDivergentQuestion(memoryWorkspace.currentDraft, language, ai);
+                if (divergentQuestion) {
+                    hooks.onLog?.(`Injecting divergent question: "${divergentQuestion}"`);
+                    currentQueries = [...gapQueries, divergentQuestion];
+                } else {
+                    currentQueries = gapQueries;
+                }
             } else {
                 currentQueries = [];
             }
@@ -885,6 +898,24 @@ export const findSynapticLink = async (
         newCandIds.forEach(id => memoryWorkspace.retrievedNoteIds.add(id));
         
         memoryWorkspace.impasseReason = `Context built over ${cycle} cycle(s). Final draft is ready for insight generation.`;
+
+        // --- Novelty Evaluation Step ---
+        if (memoryWorkspace.currentDraft) {
+            const noveltyScore = await evaluateNovelty(memoryWorkspace.currentDraft, ai);
+            hooks.onLog?.(`Draft novelty score: ${noveltyScore.toFixed(1)}/10`);
+            const currentScores = useStore.getState().novelty_scores;
+            useStore.setState({ novelty_scores: [...currentScores, noveltyScore] });
+            if (noveltyScore >= 6.5) {
+                memoryWorkspace.hasHighNoveltyInsight = true;
+            }
+        }
+
+        // Extend the search if budget is exhausted but no novel insight has been found
+        const MAX_CYCLES_HARD_LIMIT = budget.maxCycles + 2; // Allow up to 2 extensions
+        if (cycle === budget.maxCycles && !memoryWorkspace.hasHighNoveltyInsight && cycle < MAX_CYCLES_HARD_LIMIT) {
+            hooks.onLog?.('No high-novelty insight found yet. Extending research by one cycle to seek novelty.');
+            budget.maxCycles++;
+        }
     }
 
     // --- Insight Generation Step (after context-building loop) ---
