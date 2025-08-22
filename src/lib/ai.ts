@@ -328,12 +328,20 @@ const rrf = (rankedLists: string[][], k = 60) => {
   return Array.from(score.entries()).sort((a,b)=> b[1]-a[1]).map(([id]) => id);
 };
 
-const retrieveCandidateNotesHQ = async (queries: string[], vectorStore: VectorStore, existingNotes: Note[], newNoteId: string, perQueryK = 10, finalK = 8): Promise<string[]> => {
+const retrieveCandidateNotesHQ = async (
+  queries: string[],
+  vectorStore: VectorStore,
+  existingNotes: Note[],
+  newNoteId: string,
+  perQueryK = 10,
+  finalK = 8,
+  randomInject = 0
+): Promise<string[]> => {
   if (!queries.length || existingNotes.length === 0) return [];
 
   // 1. Lexical Ranking
   const lexRankedIds = lexicalRankNotes(queries, existingNotes, 40);
-  
+
   // 2. Vector Ranking
   const vecLists: string[][] = [];
   const queryEmbeddings = await generateBatchEmbeddings(queries);
@@ -346,7 +354,23 @@ const retrieveCandidateNotesHQ = async (queries: string[], vectorStore: VectorSt
   });
 
   // 3. Fuse with RRF
-  return rrf([...vecLists, lexRankedIds]).slice(0, finalK);
+  const fused = rrf([...vecLists, lexRankedIds]);
+  const top = fused.slice(0, finalK);
+
+  if (randomInject > 0) {
+    const used = new Set(top);
+    const pool = existingNotes
+      .map(n => n.id)
+      .filter(id => id !== newNoteId && !used.has(id));
+    for (let i = 0; i < randomInject && pool.length > 0; i++) {
+      const idx = Math.floor(Math.random() * pool.length);
+      const [picked] = pool.splice(idx, 1);
+      top.push(picked);
+      used.add(picked);
+    }
+  }
+
+  return top;
 };
 
 
@@ -560,8 +584,8 @@ export const findSynapticLink = async (
 
         setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingSearching')] }));
         const candIds = await retrieveCandidateNotesHQ(
-            Array.from(memoryWorkspace.probes), vectorStore, existingNotes, newNote.id, 
-            budget.perQueryK, budget.finalK
+            Array.from(memoryWorkspace.probes), vectorStore, existingNotes, newNote.id,
+            budget.perQueryK, budget.finalK, budget.randomInject
         );
         const newCandIds = candIds.filter(id => !memoryWorkspace.retrievedNoteIds.has(id));
         if (newCandIds.length === 0 && cycle > 1) break;
