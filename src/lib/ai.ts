@@ -328,7 +328,9 @@ const rrf = (rankedLists: string[][], k = 60) => {
   return Array.from(score.entries()).sort((a,b)=> b[1]-a[1]).map(([id]) => id);
 };
 
-const retrieveCandidateNotesHQ = async (queries: string[], vectorStore: VectorStore, existingNotes: Note[], newNoteId: string, perQueryK = 10, finalK = 8): Promise<string[]> => {
+const retrieveCandidateNotesHQ = async (
+    queries: string[], vectorStore: VectorStore, existingNotes: Note[], newNoteId: string, budget: Budget
+): Promise<string[]> => {
   if (!queries.length || existingNotes.length === 0) return [];
 
   // 1. Lexical Ranking
@@ -340,13 +342,27 @@ const retrieveCandidateNotesHQ = async (queries: string[], vectorStore: VectorSt
 
   queryEmbeddings.forEach(embedding => {
       if (embedding && embedding.length > 0) {
-          const matches = vectorStore.findNearest(embedding, perQueryK, newNoteId);
+          const matches = vectorStore.findNearest(embedding, budget.perQueryK, newNoteId);
           vecLists.push([...new Set(matches.map(m => m.parentChunkId.split(':')[0]))]);
       }
   });
 
   // 3. Fuse with RRF
-  return rrf([...vecLists, lexRankedIds]).slice(0, finalK);
+  const fused = rrf([...vecLists, lexRankedIds]);
+
+  // 4. Inject Wildcards
+  if (budget.maxWildcards > 0) {
+      const fusedSet = new Set(fused);
+      const available = existingNotes.filter(n => !fusedSet.has(n.id) && n.id !== newNoteId);
+      for (let i = 0; i < budget.maxWildcards && available.length > 0; i++) {
+          const randIdx = Math.floor(Math.random() * available.length);
+          const wildcardId = available[randIdx].id;
+          fused.push(wildcardId);
+          available.splice(randIdx, 1); // Ensure we don't pick the same one again
+      }
+  }
+
+  return fused.slice(0, budget.finalK);
 };
 
 
@@ -382,6 +398,8 @@ Return ONLY the JSON array of strings.`;
     }
 };
 
+type UserFeedback = { insightCore: string; vote: 'up' | 'down' };
+
 const runSynthesisAndRanking = async (
     newNote: Note,
     candNotes: Note[],
@@ -389,7 +407,8 @@ const runSynthesisAndRanking = async (
     t: TFunction,
     language: Language,
     searchQueries: string[],
-    budget: Budget
+    budget: Budget,
+    userFeedback: UserFeedback[] = []
 ): Promise<{ results: InsightResult[], candIds: string[] }> => {
     if (candNotes.length === 0) return { results: [], candIds: [] };
 
@@ -431,15 +450,31 @@ const runSynthesisAndRanking = async (
     if (insights.length === 0) return { results: [], candIds: candNotes.map(c => c.id) };
 
     setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingRanking')] }));
+
+    const jaccard = (a: Set<string>, b: Set<string>) => {
+        const intersection = new Set([...a].filter(x => b.has(x)));
+        const union = new Set([...a, ...b]);
+        return union.size === 0 ? 0 : intersection.size / union.size;
+    };
+    const feedbackTokens = userFeedback.map(f => ({ vote: f.vote, tokens: new Set(tokenize(f.insightCore)) }));
     
     const scoredInsights = insights.map((insight, i) => {
         const { conviction, fluency } = insight.eurekaMarkers;
         const surprise = insight.bayesianSurprise;
         const diversity = new Set(insight.evidenceRefs.map(e => e.childId.split('::')[0])).size;
         
+        const insightTokens = new Set(tokenize(insight.insightCore));
+        let feedbackScore = 0;
+        if (feedbackTokens.length > 0) {
+            const similarities = feedbackTokens.map(f => ({ vote: f.vote, score: jaccard(insightTokens, f.tokens) }));
+            const maxUpvote = Math.max(0, ...similarities.filter(s => s.vote === 'up').map(s => s.score));
+            const maxDownvote = Math.max(0, ...similarities.filter(s => s.vote === 'down').map(s => s.score));
+            feedbackScore = maxUpvote - maxDownvote; // [-1, 1]
+        }
+
         const ctr = (insight as any).__counter as { severity?: number } | undefined;
         const penalty = ctr?.severity ? (0.25 * Math.min(1, ctr.severity)) : 0;
-        const score = 0.45 * conviction + 0.25 * fluency + 0.20 * surprise + 0.10 * Math.tanh(diversity/6) - penalty;
+        const score = (0.40 * conviction) + (0.25 * fluency) + (0.15 * surprise) + (0.10 * Math.tanh(diversity/6)) + (0.10 * feedbackScore) - penalty;
         return { insight, oldNoteId: candNotes[i].id, score };
     });
     
@@ -464,6 +499,158 @@ const runSynthesisAndRanking = async (
     return { results, candIds: candNotes.map(c => c.id) };
 };
 
+const generateConstellationInsight = async (
+    evidenceChunks: { noteId: string, childId: string, text: string }[],
+    language: Language,
+    temperature: number
+): Promise<InsightPayload | null> => {
+    if (!ai) return null;
+
+    const prompt = `You are a "Constellation" Insight Engine. Your goal is to find a deep, non-obvious connection that **unites all three** of the provided evidence sources.
+
+- Source 1 (from the newest note) is the starting point.
+- Source 2 (from a connected note) is the first link.
+- Source 3 (from a 'bridge' note) is a second-hop connection.
+
+Identify a unifying theme, pattern, analogy, or principle. Frame the insight as a "constellation" that reveals how all three are related.
+
+RULES:
+- You MUST use ONLY the provided evidence chunks. All quotes in 'evidenceRefs' MUST be exact substrings of the provided text for that chunk.
+- Ground your entire analysis in the provided evidence. Do not invent information.
+- Return ONLY a single, valid JSON object matching the schema.
+
+EVIDENCE CHUNKS (from 3 notes):
+---
+${evidenceChunks.map(c => `[${c.noteId}::${c.childId}] ${c.text}`).join('\n')}
+---`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: MODEL_NAME,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: {
+                responseMimeType: 'application/json',
+                // @ts-ignore
+                responseSchema: INSIGHT_SCHEMA,
+                temperature
+            }
+        });
+        const result = safeParseGeminiJson<InsightPayload>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
+        if (result && result.mode !== 'none') {
+            const chunkMap = new Map<string, string>();
+            evidenceChunks.forEach(c => chunkMap.set(`${c.noteId}::${c.childId}`, c.text));
+
+            result.evidenceRefs = result.evidenceRefs.filter(ref => {
+                const sourceText = chunkMap.get(`${ref.noteId}::${ref.childId}`);
+                return sourceText ? sourceText.includes(ref.quote) : false;
+            });
+            return result;
+        }
+        return null;
+    } catch (error) {
+        console.error("Error in generateConstellationInsight:", error);
+        return null;
+    }
+};
+
+const findBridgingInsight = async (
+    baseInsight: InsightResult,
+    newNote: Note,
+    existingNotes: Note[],
+    vectorStore: VectorStore,
+    budget: Budget,
+    language: Language
+): Promise<InsightResult | null> => {
+    const noteA = existingNotes.find(n => n.id === baseInsight.oldNoteId);
+    if (!noteA) return null;
+
+    // 1. Find bridge candidates related to Note A
+    const bridgeQueries = await generateSearchQueries(noteA, budget);
+    if (bridgeQueries.length === 0) return null;
+
+    const notesToSearch = existingNotes.filter(n => n.id !== newNote.id && n.id !== noteA.id);
+    const bridgeCandIds = await retrieveCandidateNotesHQ(bridgeQueries, vectorStore, notesToSearch, noteA.id, budget);
+    const bridgeCands = existingNotes.filter(n => bridgeCandIds.slice(0, 2).includes(n.id)); // Try top 2 bridges
+    if (bridgeCands.length === 0) return null;
+
+    // 2. Synthesize a 3-way "constellation" insight
+    const mkPool = (note: Note): Frag[] =>
+        note.parentChunks?.flatMap(pc => pc.children.map(c => ({
+            noteId: note.id,
+            parentId: pc.id,
+            childId: `${pc.id}::${c.id}`,
+            text: c.text,
+            tokens: estTokens(c.text)
+        }))) ?? [];
+
+    let bestConstellation: InsightResult | null = null;
+
+    for (const noteB of bridgeCands) {
+        const pool = [...mkPool(newNote), ...mkPool(noteA), ...mkPool(noteB)];
+        const queryText = (bridgeQueries.join(' ') || noteA.title || '').slice(0, 600);
+
+        let picked = pickEvidenceSubmodular(pool, queryText, budget.maxFragments);
+        picked = capFragmentsByBudget(picked, budget.contextCapChars);
+        const evidenceChunks = picked.map(p => ({ noteId: p.noteId, childId: p.childId, text: p.text }));
+
+        const insightPayload = await generateConstellationInsight(evidenceChunks, language, budget.tempInsight);
+
+        if (insightPayload) {
+            const result: InsightResult = {
+                ...insightPayload,
+                newNoteId: newNote.id,
+                oldNoteId: noteB.id, // The "old" note is now the bridge note
+                thinkingProcess: {
+                    searchQueries: bridgeQueries,
+                    retrievedCandidateIds: bridgeCandIds,
+                    synthesisCandidates: [],
+                    rankingRationale: `Constellation insight found by bridging ${newNote.id} -> ${noteA.id} -> ${noteB.id}`,
+                    constellationSourceIds: [newNote.id, noteA.id, noteB.id]
+                },
+                confidence: insightPayload.eurekaMarkers.conviction
+            };
+            if ((result.confidence ?? 0) > (bestConstellation?.confidence ?? 0)) {
+                bestConstellation = result;
+            }
+        }
+    }
+
+    return bestConstellation;
+};
+
+
+const runAgenticRefinement = async ({
+    insight, tier, topic, budget
+}: {
+    insight: InsightResult; tier: Tier; topic: string; budget: Budget;
+}): Promise<InsightResult | null> => {
+    if (tier !== 'pro') return null;
+
+    const evidenceTexts = (insight.evidenceRefs || []).map((e: any) => e.quote).filter(Boolean);
+
+    const transcript = await maybeAutoDeepen({
+        tier,
+        topic: topic,
+        insightCore: insight.insightCore || 'Candidate insight',
+        evidenceTexts,
+        tools: { web: searchWeb, mind: mindMapTool() },
+        hooks: { onLog: console.debug, onTool: console.debug },
+        budget
+    });
+
+    if (transcript) {
+        const refinedInsight = { ...insight };
+        refinedInsight.thinkingProcess = refinedInsight.thinkingProcess || {};
+        refinedInsight.thinkingProcess.agenticTranscript = transcript;
+        refinedInsight.insightCore += ' — refined via agentic research';
+        // Boost confidence slightly after refinement to encourage selection
+        refinedInsight.confidence = (refinedInsight.confidence ?? 0) * 1.1;
+        return refinedInsight;
+    }
+
+    return null;
+};
+
 async function postProcessWithAgentic({
   tier, newNote, results
 }:{
@@ -472,48 +659,23 @@ async function postProcessWithAgentic({
   if (tier !== 'pro' || !results?.length) return results;
 
   const top = results[0];
+  const transcript = top.thinkingProcess?.agenticTranscript;
 
-  // 1) signals
-  const evidenceTexts = (top.evidenceRefs || []).map((e:any)=> e.quote).filter(Boolean);
-  const signals = computeSignals({
-      queries: top.thinkingProcess?.searchQueries || [],
-      candidateScores: results.map(r => r.confidence ?? 0),
-      evidenceTexts
-  });
-
-  // 2) adaptive budget
-  const budget = deriveBudget(tier, signals);
-
-  // 3) maybe deepen using existing controller
-  const transcript = await maybeAutoDeepen({
-    tier,
-    topic: newNote.title || newNote.content.slice(0,120),
-    insightCore: top.insightCore || 'Candidate insight',
-    evidenceTexts,
-    tools: { web: searchWeb, mind: mindMapTool() },
-    hooks: { onLog: console.debug, onTool: console.debug },
-    budget
-  });
-
-  if (transcript) {
-    top.thinkingProcess = top.thinkingProcess || {};
-    top.thinkingProcess.agenticTranscript = transcript;
-  }
-
-  // 4) enumerate candidate answers
+  // 1) enumerate candidate answers
   const candidates = (top.hypotheses || []).map(h => ({ text: h.statement, prior: h.prior }));
   candidates.unshift({ text: top.insightCore });
 
-  // 5) grounded verification
+  // 2) grounded verification
   const q = newNote.title || newNote.content.slice(0, 120);
   const verdicts = await verifyCandidates(q, candidates, 3);
 
-  // 6) choose final based on supported verdicts; attach citations
+  // 3) choose final based on supported verdicts; attach citations
   const supported = verdicts.find(v => v.verdict === 'supported') ?? verdicts[0];
 
   if (supported) {
     let newInsightCore = supported.candidate.text;
-    if (transcript) {
+    // Keep the refinement tag if it existed
+    if (transcript && !newInsightCore.includes('refined via')) {
       newInsightCore += ' — refined via agentic research';
     }
     top.insightCore = newInsightCore;
@@ -522,9 +684,6 @@ async function postProcessWithAgentic({
     if (supported.verdict === 'supported') {
       top.confidence = Math.max(top.confidence ?? 0, 0.85);
     }
-  } else if (transcript) {
-    // if no supported verdict, but we have a transcript, we should still update the core
-    top.insightCore += ' — refined via agentic research';
   }
 
   return results;
@@ -541,7 +700,8 @@ export const findSynapticLink = async (
 
     let memoryWorkspace = {
         probes: new Set<string>(), retrievedNoteIds: new Set<string>(),
-        bestResults: [] as InsightResult[], impasseReason: "Initial search."
+        bestResults: [] as InsightResult[], impasseReason: "Initial search.",
+        agenticRefinements: 0
     };
     let cycle = 0;
     for (cycle = 1; cycle <= budget.maxCycles; cycle++) {
@@ -560,8 +720,8 @@ export const findSynapticLink = async (
 
         setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingSearching')] }));
         const candIds = await retrieveCandidateNotesHQ(
-            Array.from(memoryWorkspace.probes), vectorStore, existingNotes, newNote.id, 
-            budget.perQueryK, budget.finalK
+            Array.from(memoryWorkspace.probes), vectorStore, existingNotes, newNote.id,
+            budget
         );
         const newCandIds = candIds.filter(id => !memoryWorkspace.retrievedNoteIds.has(id));
         if (newCandIds.length === 0 && cycle > 1) break;
@@ -571,7 +731,7 @@ export const findSynapticLink = async (
         let candNotes = existingNotes.filter(n => memoryWorkspace.retrievedNoteIds.has(n.id) && n.parentChunks && n.parentChunks.length > 0);
         if (candNotes.length === 0) continue;
 
-        const { results } = await runSynthesisAndRanking(newNote, candNotes, setLoadingState, t, language, Array.from(memoryWorkspace.probes), budget);
+        const { results } = await runSynthesisAndRanking(newNote, candNotes, setLoadingState, t, language, Array.from(memoryWorkspace.probes), budget, []); // No feedback yet
         
         if (results.length > 0) {
             const combined = [...memoryWorkspace.bestResults, ...results];
@@ -580,10 +740,48 @@ export const findSynapticLink = async (
             memoryWorkspace.bestResults = uniqueResults.slice(0,3);
         }
 
+        // --- Multi-hop Expansion ---
+        if (budget.enableMultiHop && cycle > 0 && memoryWorkspace.bestResults.length > 0) {
+            const constellationInsight = await findBridgingInsight(
+                memoryWorkspace.bestResults[0], newNote, existingNotes, vectorStore, budget, language
+            );
+            if (constellationInsight) {
+                // Replace the top insight if the constellation is better
+                if ((constellationInsight.confidence ?? 0) > (memoryWorkspace.bestResults[0].confidence ?? 0)) {
+                    memoryWorkspace.bestResults.unshift(constellationInsight);
+                    const uniqueResults = Array.from(new Map(memoryWorkspace.bestResults.map(r => [r.oldNoteId, r])).values());
+                    memoryWorkspace.bestResults = uniqueResults.slice(0,3);
+                }
+            }
+        }
+
         const topConfidence = memoryWorkspace.bestResults[0]?.confidence ?? 0;
         if (topConfidence > 0.85 && cycle === 1) break; // Early exit on high confidence in first cycle
 
-        memoryWorkspace.impasseReason = `Best connection has conviction of only ${(topConfidence * 100).toFixed(0)}%. It may lack a clear mechanism or predictive power.`;
+        // --- Agentic Refinement (In-Loop) ---
+        if (
+            cycle < budget.maxCycles &&
+            memoryWorkspace.agenticRefinements < budget.maxAgenticRefinementsPerRun &&
+            memoryWorkspace.bestResults.length > 0 &&
+            topConfidence < 0.7
+        ) {
+            setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingRefining')] }));
+            const refined = await runAgenticRefinement({
+                insight: memoryWorkspace.bestResults[0],
+                tier,
+                topic: newNote.title || newNote.content.slice(0, 120),
+                budget
+            });
+            if (refined) {
+                memoryWorkspace.bestResults[0] = refined;
+                memoryWorkspace.agenticRefinements++;
+                // Update confidence and impasse reason after refinement
+                const newTopConfidence = refined.confidence ?? 0;
+                memoryWorkspace.impasseReason = `After agentic refinement, conviction is ${(newTopConfidence * 100).toFixed(0)}%.`;
+            }
+        } else {
+            memoryWorkspace.impasseReason = `Best connection has conviction of only ${(topConfidence * 100).toFixed(0)}%. It may lack a clear mechanism or predictive power.`;
+        }
 
         if (cycle < budget.maxCycles) {
             const topResult = memoryWorkspace.bestResults[0];

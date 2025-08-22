@@ -34,6 +34,12 @@ export async function runAgenticInsight(
       break;
     }
 
+    if (action === 'continue') {
+        ctx.transcript.push(`CONTINUE: ${message}`);
+        steps++;
+        continue;
+    }
+
     let result: ToolResult = { action, content: '', ok: true };
 
     if (action === 'web_search') {

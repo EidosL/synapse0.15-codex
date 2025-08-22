@@ -26,9 +26,16 @@ export async function planNextStep(
   temperature = 0.4
 ): Promise<PlanJSON|null> {
   if (!ai) return null;
-  const prompt = `You are a planning agent for deep research.
-Propose ONE minimal next step as JSON. Prefer ONLY: web_search, mind_map, finalize.
-Use web_search to fetch missing facts; mind_map to extract/clarify entities/relations; finalize if sufficient.`;
+  const prompt = `You are a planning agent for deep research. Your goal is to formulate a plan to resolve an insight.
+You can take several steps. Propose ONE step at a time.
+
+Your available actions are:
+- web_search: Use when you need external information, facts, or context. (e.g., "search for the definition of 'Bayesian Surprise'")
+- mind_map: Use to explore the relationships between concepts already in the transcript. (e.g., "explore the link between 'Insight' and 'Serendipity'")
+- continue: Use when you have gathered information and need to think or formulate the next question. Your 'message' should be your internal monologue.
+- finalize: Use ONLY when you have a complete answer and no further steps are needed. Your 'message' should be the final conclusion.
+
+Analyze the transcript and propose the next logical step.`;
 
   const contents = `${prompt}
 MIND_HINTS:
@@ -39,8 +46,10 @@ ${transcript.slice(0, 3000)}`;
 
   const res = await ai.models.generateContent({
     model: MODEL_NAME,
-    contents,
+    contents: [{ role: 'user', parts: [{ text: contents }] }],
+    // @ts-ignore
     config: { responseMimeType:'application/json', responseSchema: PLAN_SCHEMA, temperature }
   });
-  return safeParseGeminiJson<PlanJSON>(res.text);
+  const plan = safeParseGeminiJson<PlanJSON>(res.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
+  return plan;
 }
