@@ -349,6 +349,50 @@ const retrieveCandidateNotesHQ = async (queries: string[], vectorStore: VectorSt
   return rrf([...vecLists, lexRankedIds]).slice(0, finalK);
 };
 
+const retrieveMultiHopChains = async (
+  seedIds: string[],
+  existingNotes: Note[],
+  vectorStore: VectorStore,
+  budget: Budget
+): Promise<Note[][]> => {
+  const idToNote = new Map(existingNotes.map(n => [n.id, n]));
+  const maxDepth = budget.maxHopDepth || 1;
+  const groups: Note[][] = [];
+
+  const embedAndRetrieve = async (note: Note): Promise<string[]> => {
+    const text = (note.title || note.content).slice(0, 200);
+    return retrieveCandidateNotesHQ([text], vectorStore, existingNotes, note.id, budget.perQueryK, budget.perQueryK);
+  };
+
+  for (const id of seedIds) {
+    const seed = idToNote.get(id);
+    if (!seed) continue;
+    groups.push([seed]);
+    if (maxDepth <= 1) continue;
+
+    let frontier: Note[][] = [[seed]];
+    for (let depth = 1; depth < maxDepth; depth++) {
+      const next: Note[][] = [];
+      for (const chain of frontier) {
+        const last = chain[chain.length - 1];
+        const neighborIds = await embedAndRetrieve(last);
+        for (const nid of neighborIds) {
+          if (chain.some(n => n.id === nid)) continue;
+          const nb = idToNote.get(nid);
+          if (!nb) continue;
+          const newChain = [...chain, nb];
+          groups.push(newChain);
+          next.push(newChain);
+        }
+      }
+      frontier = next;
+      if (!frontier.length) break;
+    }
+  }
+
+  return groups;
+};
+
 
 // --- Orchestrator for the RAG pipeline ---
 
@@ -384,18 +428,18 @@ Return ONLY the JSON array of strings.`;
 
 const runSynthesisAndRanking = async (
     newNote: Note,
-    candNotes: Note[],
+    noteGroups: Note[][],
     setLoadingState: SetLoadingState,
     t: TFunction,
     language: Language,
     searchQueries: string[],
     budget: Budget
-): Promise<{ results: InsightResult[], candIds: string[] }> => {
-    if (candNotes.length === 0) return { results: [], candIds: [] };
+): Promise<InsightResult[]> => {
+    if (noteGroups.length === 0) return [];
 
-    setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingSynthesizing', candNotes.length)] }));
-    
-    const insightPromises = candNotes.map(async (candNote) => {
+    setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingSynthesizing', noteGroups.length)] }));
+
+    const insightPromises = noteGroups.map(async (group) => {
         const mkPool = (note: Note): Frag[] =>
             note.parentChunks?.flatMap(pc => pc.children.map(c => ({
                 noteId: note.id,
@@ -405,7 +449,10 @@ const runSynthesisAndRanking = async (
                 tokens: estTokens(c.text)
             }))) ?? [];
 
-        const pool = [...mkPool(newNote), ...mkPool(candNote)];
+        const pool = [
+            ...mkPool(newNote),
+            ...group.flatMap(mkPool)
+        ];
         const queryText = (searchQueries.join(' ') || newNote.title || '').slice(0, 600);
 
         let picked = pickEvidenceSubmodular(pool, queryText, budget.maxFragments);
@@ -424,45 +471,47 @@ const runSynthesisAndRanking = async (
             const ctr = await counterInsightCheck(insight.insightCore, evidenceChunks);
             (insight as any).__counter = ctr;
         }
-        return insight;
+        return { insight, group };
     });
 
-    const insights = (await Promise.all(insightPromises)).filter((i): i is InsightPayload => !!i);
-    if (insights.length === 0) return { results: [], candIds: candNotes.map(c => c.id) };
+    const insights = (await Promise.all(insightPromises)).filter((i): i is { insight: InsightPayload, group: Note[] } => !!i.insight);
+    if (insights.length === 0) return [];
 
     setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingRanking')] }));
-    
-    const scoredInsights = insights.map((insight, i) => {
+
+    const scoredInsights = insights.map(({ insight, group }) => {
         const { conviction, fluency } = insight.eurekaMarkers;
         const surprise = insight.bayesianSurprise;
         const diversity = new Set(insight.evidenceRefs.map(e => e.childId.split('::')[0])).size;
-        
+
         const ctr = (insight as any).__counter as { severity?: number } | undefined;
         const penalty = ctr?.severity ? (0.25 * Math.min(1, ctr.severity)) : 0;
         const score = 0.45 * conviction + 0.25 * fluency + 0.20 * surprise + 0.10 * Math.tanh(diversity/6) - penalty;
-        return { insight, oldNoteId: candNotes[i].id, score };
+        return { insight, group, score };
     });
-    
+
     scoredInsights.sort((a,b) => b.score - a.score);
 
-    const results = scoredInsights.slice(0, 3).map(({ insight, oldNoteId, score }) => {
+    const results = scoredInsights.slice(0, 3).map(({ insight, group, score }) => {
+        const groupIds = group.map(n => n.id);
         const thinkingProcess: InsightThinkingProcess = {
             searchQueries: [],
-            retrievedCandidateIds: candNotes.map(c => c.id),
-            synthesisCandidates: [], 
-            rankingRationale: `Ranked by cognitive markers: Conviction (${(insight.eurekaMarkers.conviction*100).toFixed(0)}%), Fluency (${(insight.eurekaMarkers.fluency*100).toFixed(0)}%), Bayesian Surprise (${(insight.bayesianSurprise*100).toFixed(0)}%). Final score: ${score.toFixed(2)}`,
+            retrievedCandidateIds: groupIds,
+            synthesisCandidates: [],
+            rankingRationale: `Ranked by cognitive markers: Conviction (${(insight.eurekaMarkers.conviction*100).toFixed(0)}%),Fluency (${(insight.eurekaMarkers.fluency*100).toFixed(0)}%), Bayesian Surprise (${(insight.bayesianSurprise*100).toFixed(0)}%). Final score: ${score.toFixed(2)}`,
         };
         return {
             ...insight,
             newNoteId: newNote.id,
-            oldNoteId,
+            oldNoteId: groupIds[0],
             thinkingProcess,
             confidence: insight.eurekaMarkers.conviction
         };
     });
 
-    return { results, candIds: candNotes.map(c => c.id) };
+    return results;
 };
+
 
 async function postProcessWithAgentic({
   tier, newNote, results
@@ -560,23 +609,31 @@ export const findSynapticLink = async (
 
         setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingSearching')] }));
         const candIds = await retrieveCandidateNotesHQ(
-            Array.from(memoryWorkspace.probes), vectorStore, existingNotes, newNote.id, 
+            Array.from(memoryWorkspace.probes), vectorStore, existingNotes, newNote.id,
             budget.perQueryK, budget.finalK
         );
-        const newCandIds = candIds.filter(id => !memoryWorkspace.retrievedNoteIds.has(id));
+        let noteGroups: Note[][] = [];
+        if (budget.maxHopDepth > 1) {
+            noteGroups = await retrieveMultiHopChains(candIds, existingNotes, vectorStore, budget);
+        } else {
+            const candNotes = existingNotes.filter(n => candIds.includes(n.id));
+            noteGroups = candNotes.map(n => [n]);
+        }
+        const flatIds = Array.from(new Set(noteGroups.flat().map(n => n.id)));
+        const newCandIds = flatIds.filter(id => !memoryWorkspace.retrievedNoteIds.has(id));
         if (newCandIds.length === 0 && cycle > 1) break;
-        
-        newCandIds.forEach(id => memoryWorkspace.retrievedNoteIds.add(id));
-        
-        let candNotes = existingNotes.filter(n => memoryWorkspace.retrievedNoteIds.has(n.id) && n.parentChunks && n.parentChunks.length > 0);
-        if (candNotes.length === 0) continue;
 
-        const { results } = await runSynthesisAndRanking(newNote, candNotes, setLoadingState, t, language, Array.from(memoryWorkspace.probes), budget);
-        
+        newCandIds.forEach(id => memoryWorkspace.retrievedNoteIds.add(id));
+
+        const groupsWithChunks = noteGroups.map(g => g.filter(n => n.parentChunks && n.parentChunks.length > 0)).filter(g => g.length > 0);
+        if (groupsWithChunks.length === 0) continue;
+
+        const results = await runSynthesisAndRanking(newNote, groupsWithChunks, setLoadingState, t, language, Array.from(memoryWorkspace.probes), budget);
+
         if (results.length > 0) {
             const combined = [...memoryWorkspace.bestResults, ...results];
             combined.sort((a,b) => (b.confidence ?? 0) - (a.confidence ?? 0));
-            const uniqueResults = Array.from(new Map(combined.map(r => [r.oldNoteId, r])).values());
+            const uniqueResults = Array.from(new Map(combined.map(r => [(r.thinkingProcess?.retrievedCandidateIds || [r.oldNoteId]).join('+'), r])).values());
             memoryWorkspace.bestResults = uniqueResults.slice(0,3);
         }
 
@@ -606,7 +663,7 @@ export const findSynapticLink = async (
                 depthCycles: cycle,
                 tokensEstimated: est.tokens,
                 llmCalls: est.llmCalls,
-                candidateNotes: candNotes.length,
+                candidateNotes: flatIds.length,
                 evidenceSnippets: topResult?.evidenceRefs.length ?? 0,
                 signals: sig,
                 mode: topResult?.mode,
@@ -622,7 +679,9 @@ export const findSynapticLink = async (
     memoryWorkspace.bestResults.forEach(r => {
         if (r.thinkingProcess) {
             r.thinkingProcess.searchQueries = Array.from(memoryWorkspace.probes);
-            r.thinkingProcess.retrievedCandidateIds = Array.from(memoryWorkspace.retrievedNoteIds);
+            const chainIds = r.thinkingProcess.retrievedCandidateIds || [];
+            const allIds = Array.from(new Set([...chainIds, ...Array.from(memoryWorkspace.retrievedNoteIds)]));
+            r.thinkingProcess.retrievedCandidateIds = allIds;
         }
     });
 

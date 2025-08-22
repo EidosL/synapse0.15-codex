@@ -14,9 +14,11 @@ export function pickEvidenceSubmodular(
   pool: Frag[],                         // candidate fragments
   queryText: string,
   maxFragments: number,
-  perNoteCap = Math.max(4, Math.ceil(maxFragments/3)),
+  perNoteCap?: number,
   redundancyJaccard = 0.8
 ): Frag[] {
+  const noteCount = new Set(pool.map(p => p.noteId)).size || 1;
+  const cap = perNoteCap ?? Math.max(2, Math.ceil(maxFragments / noteCount));
   const qF = FEATURES(queryText);
   const candidates = pool.map(f => ({ f, F: FEATURES(f.text) }));
 
@@ -31,7 +33,7 @@ export function pickEvidenceSubmodular(
       const { f, F } = candidates[i];
       // enforce per-note cap
       const used = usedByNote.get(f.noteId) ?? 0;
-      if (used >= perNoteCap) continue;
+      if (used >= cap) continue;
       // redundancy filter
       if (chosen.some(x => OVERLAP(x.F, F) > redundancyJaccard)) continue;
 
