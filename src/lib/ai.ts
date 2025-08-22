@@ -35,7 +35,7 @@ if (process.env.API_KEY) {
 export const ai = aiInstance;
 
 // This should only be used for free-text generation, not for JSON mode.
-const CHINESE_OUTPUT_INSTRUCTION = "\n\nCRITICAL: You MUST respond exclusively in Simplified Chinese.";
+export const CHINESE_OUTPUT_INSTRUCTION = "\n\nCRITICAL: You MUST respond exclusively in Simplified Chinese.";
 
 export const safeParseGeminiJson = <T,>(text: string): T | null => {
     const jsonText = text.trim();
@@ -104,21 +104,38 @@ Document Content:\n---\n${text.slice(0, 20000)}\n---\nReturn ONLY the JSON array
 
 export const generateBatchEmbeddings = async (texts: string[]): Promise<number[][]> => {
     if (!ai || texts.length === 0) return texts.map(() => []);
-    const out: number[][] = Array.from({ length: texts.length }, () => []);
-    for (let i = 0; i < texts.length; i++) {
+
+    // Gemini API has a limit on requests per minute. Batching is crucial.
+    // It also has a limit on the number of documents per request (e.g., 100).
+    const BATCH_SIZE = 100;
+    const allEmbeddings: number[][] = [];
+
+    for (let i = 0; i < texts.length; i += BATCH_SIZE) {
+        const batchTexts = texts.slice(i, i + BATCH_SIZE);
         try {
-            const res = await ai.models.embedContent({
+            const res = await ai.models.embedContents({
                 model: EMBEDDING_MODEL_NAME,
-                contents: [{ role: 'user', parts: [{ text: texts[i] }] }]
+                contents: batchTexts.map(text => ({ role: 'user', parts: [{ text }] }))
             });
-            if (res.embeddings && res.embeddings[0] && res.embeddings[0].values) {
-                out[i] = res.embeddings[0].values;
+            // Ensure the number of embeddings matches the number of texts in the batch
+            if (res.embeddings && res.embeddings.length === batchTexts.length) {
+                allEmbeddings.push(...res.embeddings.map(e => e.values));
+            } else {
+                console.error(`Mismatched embedding count for batch starting at index ${i}.`);
+                // Fill with empty arrays for the failed batch
+                for (let j = 0; j < batchTexts.length; j++) {
+                    allEmbeddings.push([]);
+                }
             }
-        } catch (innerError) {
-            console.error(`Error embedding text at index ${i}`, innerError);
+        } catch (error) {
+            console.error(`Error embedding batch starting at index ${i}:`, error);
+            // On error, push empty embeddings for this batch to maintain array length
+            for (let j = 0; j < batchTexts.length; j++) {
+                allEmbeddings.push([]);
+            }
         }
     }
-    return out;
+    return allEmbeddings;
 };
 
 // --- New Insight Generation Engine (based on "The Architecture of Insight") ---

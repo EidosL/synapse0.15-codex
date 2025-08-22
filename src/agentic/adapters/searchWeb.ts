@@ -2,25 +2,21 @@ import type { WebSearch } from '../types';
 
 export const searchWeb: WebSearch = {
   async search(q: string, k: number) {
-    const apiKey = process.env.SERPAPI_API_KEY;
-    if (!apiKey) {
-      console.error('SERPAPI_API_KEY environment variable not set. Web search will not work.');
-      return [];
-    }
-
-    const params = new URLSearchParams({
-      engine: 'google',
-      q: q,
-      num: k.toString(),
-      api_key: apiKey,
-    });
-
-    const url = `https://serpapi.com/search?${params.toString()}`;
+    // The request is now proxied through our own backend to avoid CORS issues.
+    const url = '/api/search';
 
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ q, k }),
+      });
+
       if (!response.ok) {
-        console.error(`SerpAPI request failed with status ${response.status}: ${await response.text()}`);
+        const errorText = await response.text();
+        console.error(`Backend search proxy failed with status ${response.status}: ${errorText}`);
         return [];
       }
       const data = await response.json();
@@ -34,7 +30,7 @@ export const searchWeb: WebSearch = {
         .filter(r => r.url)
         .slice(0, k); // Ensure we have a URL and respect k
     } catch (error: any) {
-      console.error('SerpAPI search failed:', error);
+      console.error('Backend search proxy request failed:', error);
       return []; // Return empty array on failure to avoid crashing the agentic loop.
     }
   },

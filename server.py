@@ -1,9 +1,10 @@
 # server.py
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 import os
 import langextract as lx
+import httpx
 
 app = FastAPI()
 
@@ -81,3 +82,33 @@ def extract(req: ExtractRequest):
             source_uri=getattr(ann, "source_uri", getattr(result, "source", None))
         ))
     return ExtractResponse(items=items)
+
+class WebSearchRequest(BaseModel):
+    q: str
+    k: int
+
+@app.post("/search")
+async def web_search(req: WebSearchRequest):
+    api_key = os.environ.get("SERPAPI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="SERPAPI_API_KEY environment variable not set on the server.")
+
+    params = {
+        "engine": "google",
+        "q": req.q,
+        "num": str(req.k),
+        "api_key": api_key,
+        "google_domain": "google.com",
+        "gl": "us",
+        "hl": "en",
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get("https://serpapi.com/search", params=params)
+            response.raise_for_status()  # Raise an exception for bad status codes
+            return Response(content=response.content, media_type=response.headers.get("content-type"))
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=f"Error from SerpAPI: {e.response.text}")
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=500, detail=f"Could not connect to SerpAPI: {e}")

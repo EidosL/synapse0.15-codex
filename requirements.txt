@@ -2,3 +2,4 @@ fastapi
 pydantic
 langextract
 uvicorn
+httpx
