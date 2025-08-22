@@ -47,8 +47,10 @@ export const App: React.FC = () => {
                 style={{ display: 'none' }}
                 aria-hidden="true"
             />
-            <header>
-                <h1>🧠 Synapse</h1>
+            <header className="app-header">
+                <div className="logo">
+                    <h1>🧠 Synapse</h1>
+                </div>
                 <nav>
                     <button className="tab-button" onClick={toggleLanguage} style={{width: "60px"}}>{t('languageToggle')}</button>
                     <button className={`tab-button ${activeTab === 'vault' ? 'active' : ''}`} onClick={() => setActiveTab('vault')}>{t('vaultTab')}</button>
