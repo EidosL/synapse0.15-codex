@@ -31,30 +31,103 @@ Synapse uses a combination of techniques to find connections between your notes:
 3.  **Vector Store:** The embeddings are stored in a local vector store in your browser. A vector store is a specialized database that allows for very fast and efficient similarity searches.
 4.  **Synaptic Links:** When you ask Synapse to find connections for a note, it takes the chunks from that note, generates embeddings for them, and then searches the vector store for the most similar chunks from other notes. These connections are then presented to you as "synaptic links".
 
-## 🏃‍♀️ Running Locally
+## 🏃‍♀️ Getting Started: Running Synapse Locally
 
-**Prerequisites:** [Node.js](https://nodejs.org/)
+This guide will walk you through setting up and running Project Synapse on your local machine.
 
-1.  **Clone the repository:**
+### 1. Prerequisites
+
+Before you begin, you'll need to have a few essential tools installed on your computer.
+
+*   **Git:** Git is a version control system used to manage code. You'll need it to download the project files.
+    *   [Download Git](https://git-scm.com/downloads)
+*   **Node.js:** Node.js is a JavaScript runtime environment that allows you to run JavaScript code outside of a web browser. It also includes `npm` (Node Package Manager), which you'll use to install the project's frontend dependencies.
+    *   [Download Node.js](https://nodejs.org/en/download/) (We recommend the LTS version)
+*   **Python:** Python is a programming language used for the project's backend.
+    *   [Download Python](https://www.python.org/downloads/) (Version 3.8 or higher is recommended)
+
+### 2. Clone the Repository
+
+First, you need to download the project's source code. Open your terminal (on macOS or Linux) or Command Prompt/PowerShell (on Windows), navigate to the directory where you want to store the project, and run the following command:
+
+```bash
+git clone https://github.com/your-username/synapse.git
+cd synapse
+```
+
+This will create a new folder named `synapse` containing all the project files.
+
+### 3. Backend Setup
+
+The backend is responsible for the application's core logic.
+
+1.  **Create a Virtual Environment (Recommended):** It's a good practice to create a virtual environment to isolate the project's dependencies. This prevents conflicts with other Python projects on your system.
+
     ```bash
-    git clone https://github.com/your-username/synapse.git
-    cd synapse
+    # On macOS and Linux
+    python3 -m venv venv
+    source venv/bin/activate
+
+    # On Windows
+    python -m venv venv
+    .\venv\Scripts\activate
     ```
-2.  **Install dependencies:**
+
+2.  **Install Dependencies:** Install the required Python packages using `pip`.
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+### 4. Frontend Setup
+
+The frontend is the user interface of the application.
+
+1.  **Install Dependencies:** Install the required JavaScript packages using `npm`.
+
     ```bash
     npm install
     ```
-3.  **Set up your environment variables:**
-    Create a file named `.env.local` in the root of the project and add your Gemini API key and [SerpAPI](https://serpapi.com/) key for web search. This file is not checked into version control, so your keys will remain private.
+    This command reads the `package.json` file and downloads all the necessary libraries for the user interface.
+
+### 5. Configuration
+
+Synapse requires API keys for some of its features. You'll need to create a special file to store these keys securely.
+
+1.  **Create a `.env.local` file:** In the root of the project directory, create a new file named `.env.local`.
+
+2.  **Add API Keys:** Add the following lines to the `.env.local` file, replacing `your_api_key` with your actual keys.
+
     ```
-    GEMINI_API_KEY=your_api_key
+    GEMINI_API_KEY=your_gemini_api_key
     SERPAPI_API_KEY=your_serpapi_key
     ```
-4.  **Run the app:**
+
+    *   **`GEMINI_API_KEY`:** You can get a Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
+    *   **`SERPAPI_API_KEY`:** You can get a SerpAPI key from the [SerpAPI website](https://serpapi.com/). This is used for the web search functionality.
+
+### 6. Running the Application
+
+Now you're ready to start the application! You'll need to run both the backend and frontend servers in separate terminal windows.
+
+1.  **Start the Backend Server:**
+    In your first terminal window (with the Python virtual environment activated), run the following command:
+
+    ```bash
+    uvicorn server:app --reload
+    ```
+    The backend server will start on `http://localhost:8000`.
+
+2.  **Start the Frontend Server:**
+    In a second terminal window, run the following command:
+
     ```bash
     npm run dev
     ```
-The application will be available at `http://localhost:5173`.
+    The frontend development server will start on `http://localhost:5173`.
+
+3.  **Open the Application:**
+    You can now access the application by opening your web browser and navigating to `http://localhost:5173`.
 
 ## 🖼️ Application in Action
 
