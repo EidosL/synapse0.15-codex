@@ -132,3 +132,11 @@ Now you're ready to start the application! You'll need to run both the backend a
 ## 🖼️ Application in Action
 
 ![Synapse in action](placeholder.gif)
+
+---
+
+## ⚠️ A Note on Browser Warnings
+
+You may notice some warnings in your browser's developer console related to "third-party cookies" or "cross-site requests". These are expected and are not a security risk in this application. They appear because Project Synapse loads some of its core functionalities (like the AI models and an icon library) from specialized, high-performance services.
+
+Modern browsers are increasing their privacy protections, and these warnings are part of a broader effort to phase out third-party cookies. The services Synapse uses are already adopting new standards. Your data remains private and is not being tracked or shared unexpectedly.
