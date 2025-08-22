@@ -17,6 +17,7 @@ import { mindMapTool } from '../agentic/adapters/mindMapTool';
 import { verifyCandidates } from '../insight/verifier';
 import { useLogStore } from './logStore';
 import type { ToolResult } from '../agentic/types';
+import { runSelfEvolution } from './evolution';
 
 
 // --- API & AI ---
@@ -199,13 +200,58 @@ type InsightPayload = {
     memoryCues: string[];
 }
 
-const generateInsight = async (evidenceChunks: { noteId: string, childId: string, text: string }[], language: Language, temperature: number): Promise<InsightPayload | null> => {
+const generateInitialDraft = async (newNote: Note, language: Language): Promise<string> => {
+    if (!ai) return "Could not generate initial draft because AI is not available.";
+
+    const query = newNote.title || newNote.content.slice(0, 120);
+    const draftPrompt = `You are a research assistant. Your goal is to draft an initial hypothesis or insight connecting the following note to potential related concepts.
+
+NOTE TITLE: "${query}"
+NOTE CONTENT:
+"""
+${newNote.content.slice(0, 2000)}
+"""
+
+Your task:
+1.  Read the note and write a brief, initial draft of a potential connection or insight.
+2.  The draft should be a rough starting point for further research.
+3.  Crucially, mark any unclear points, assumptions, or areas that need more evidence with the tag "[NEEDS RESEARCH]". For example: "This concept seems related to X, but the exact mechanism is unclear [NEEDS RESEARCH]."
+4.  Keep the draft concise (2-4 sentences).
+
+This is a preliminary draft that will be iteratively improved with more information.
+${language === 'zh' ? CHINESE_OUTPUT_INSTRUCTION : ''}
+Return ONLY the text of the draft.`;
+
+    try {
+        const result = await ai.models.generateContent({
+            model: MODEL_NAME,
+            contents: [{ role: 'user', parts: [{ text: draftPrompt }] }],
+            generationConfig: { temperature: 0.8 }
+        });
+        return result.response.text();
+    } catch (error) {
+        console.error("Error generating initial draft:", error);
+        return `Failed to generate initial draft. Error: ${error instanceof Error ? error.message : String(error)}`;
+    }
+};
+
+
+const generateInsight = async (evidenceChunks: { noteId: string, childId: string, text: string }[], language: Language, temperature: number, guidingDraft?: string | null): Promise<InsightPayload | null> => {
     if (!ai) return null;
 
-    const prompt = `You are an Insight Engine. Your goal is to find a deep, non-obvious connection between the provided evidence chunks from two different notes.
+    const guidingDraftPrompt = guidingDraft
+        ? `A guiding research draft has been prepared. Use it as a starting point, but do not be constrained by it. Your primary goal is to find Eureka or Serendipity moments that go beyond this initial draft.
+
+GUIDING DRAFT:
+"""
+${guidingDraft}
+"""`
+        : "You are an Insight Engine. Your goal is to find a deep, non-obvious connection between the provided evidence chunks from two different notes.";
+
+    const prompt = `${guidingDraftPrompt}
 
 Work in one of two modes:
-A) EUREKA: Detect an **impasse**. Propose minimal **restructurings** (rename roles, invert a constraint, introduce an **analogy source domain**). For each hypothesis, compute a **prior** and **posterior**; report **Bayesian surprise** = |posterior–prior|. Prefer solutions that exhibit **striking but explanatory simplicity**.
+A) EUREKA: Detect an **impasse** (in the guiding draft, if provided, or in the evidence). Propose minimal **restructurings** (rename roles, invert a constraint, introduce an **analogy source domain**). For each hypothesis, compute a **prior** and **posterior**; report **Bayesian surprise** = |posterior–prior|. Prefer solutions that exhibit **striking but explanatory simplicity**.
 
 B) SERENDIPITY: If you spot an unexpected pattern, anomaly, or keyword that connects the notes in an accidental way, treat it as a serendipity_trigger. Project its potential value and propose one concrete exploitation step.
 
@@ -380,6 +426,91 @@ Return ONLY the JSON array of strings.`;
     }
 };
 
+const analyzeDraftForGaps = async (draft: string, noteQuery: string, priorQueries: string[], budget: Budget): Promise<string[]> => {
+    if (!ai) return [];
+    const gapPrompt = `You are an assistant analyzing a research draft for missing information. Your goal is to suggest targeted search queries to fill the gaps.
+
+Original Note/Query: "${noteQuery}"
+Prior Search Queries: ${JSON.stringify(priorQueries)}
+Current Draft:
+"""
+${draft}
+"""
+
+Instructions:
+1.  Read the draft and identify specific gaps, unsupported claims, or placeholders like "[NEEDS RESEARCH]".
+2.  For each gap, generate a focused search query that would likely find the missing information or evidence.
+3.  Do not suggest queries that are too similar to the prior search queries.
+4.  Return a JSON array of 2-3 new, diverse search query strings. If no gaps are found, return an empty array.
+
+Return ONLY the JSON array of strings.`;
+
+    try {
+        const result = await ai.models.generateContent({
+            model: MODEL_NAME,
+            contents: [{ role: 'user', parts: [{ text: gapPrompt }] }],
+            generationConfig: {
+                responseMimeType: "application/json",
+                responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } },
+                temperature: budget.tempProbe,
+            }
+        });
+        const response = result.response;
+        return safeParseGeminiJson<string[]>(response.text()) || [];
+    } catch (e) {
+        console.error("Gap analysis for search queries failed:", e);
+        return [];
+    }
+};
+
+const integrateEvidenceIntoDraft = async (draft: string, evidenceNotes: Note[], language: Language): Promise<string> => {
+    if (!ai || evidenceNotes.length === 0) return draft;
+
+    let retrievedContent = "";
+    for (const note of evidenceNotes) {
+        // Simple heuristic to not overwhelm the context window
+        if (retrievedContent.length < 6000) {
+            retrievedContent += `--- From Note: "${note.title}" ---\n${note.content.slice(0, 1500)}...\n\n`;
+        }
+    }
+
+    if (!retrievedContent) return draft;
+
+    const denoisePrompt = `You are a research assistant. Your task is to integrate new information into a draft insight, improving it by filling gaps and adding evidence.
+
+Current Draft:
+"""
+${draft}
+"""
+
+Newly Retrieved Information:
+"""
+${retrievedContent}
+"""
+
+Instructions:
+1.  Carefully read the "Current Draft" and the "Newly Retrieved Information".
+2.  Integrate the new information into the draft where it is most relevant.
+3.  Focus on filling in sections marked with "[NEEDS RESEARCH]" or strengthening unsupported claims.
+4.  If the new information provides a source, you can add a citation like [Source: Note Title].
+5.  Maintain the draft's original structure and coherence. The goal is to refine and expand, not to rewrite completely.
+6.  If the new information is not relevant, return the original draft unchanged.
+${language === 'zh' ? CHINESE_OUTPUT_INSTRUCTION : ''}
+Return ONLY the updated draft text.`;
+
+    try {
+        const result = await ai.models.generateContent({
+            model: MODEL_NAME,
+            contents: [{ role: 'user', parts: [{ text: denoisePrompt }] }],
+            generationConfig: { temperature: 0.5 }
+        });
+        return result.response.text();
+    } catch (error) {
+        console.error("Error integrating evidence into draft:", error);
+        return draft; // Return original draft on error
+    }
+};
+
 type UserFeedback = { insightCore: string; vote: 'up' | 'down' };
 
 const runSynthesisAndRanking = async (
@@ -390,7 +521,8 @@ const runSynthesisAndRanking = async (
     language: Language,
     searchQueries: string[],
     budget: Budget,
-    userFeedback: UserFeedback[] = []
+    userFeedback: UserFeedback[] = [],
+    guidingDraft: string | null = null
 ): Promise<{ results: InsightResult[], candIds: string[] }> => {
     if (candNotes.length === 0) return { results: [], candIds: [] };
 
@@ -419,7 +551,7 @@ const runSynthesisAndRanking = async (
 
         const evidenceChunks = picked.map(p => ({ noteId: p.noteId, childId: p.childId, text: p.text }));
 
-        const insight = await generateInsight(evidenceChunks, language, budget.tempInsight);
+        const insight = await generateInsight(evidenceChunks, language, budget.tempInsight, guidingDraft);
 
         if (insight) {
             const ctr = await counterInsightCheck(insight.insightCore, evidenceChunks);
@@ -696,9 +828,18 @@ export const findSynapticLink = async (
     let memoryWorkspace = {
         probes: new Set<string>(), retrievedNoteIds: new Set<string>(),
         bestResults: [] as InsightResult[], impasseReason: "Initial search.",
-        agenticRefinements: 0
+        agenticRefinements: 0,
+        currentDraft: null as string | null,
     };
+
+    memoryWorkspace.currentDraft = await generateInitialDraft(newNote, language);
+    if (memoryWorkspace.currentDraft) {
+        hooks.onLog?.(`Initial draft generated: "${memoryWorkspace.currentDraft.slice(0, 100)}..."`);
+        addDevLog({ source: 'agent', type: 'draft', content: memoryWorkspace.currentDraft });
+    }
+
     let cycle = 0;
+    // This is now a context-building loop
     for (cycle = 1; cycle <= budget.maxCycles; cycle++) {
         let currentQueries: string[];
         if (cycle === 1) {
@@ -706,9 +847,16 @@ export const findSynapticLink = async (
             currentQueries = await generateSearchQueries(newNote, budget);
         } else {
             setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingReflecting')] }));
-            currentQueries = await selfProbe(newNote, memoryWorkspace.impasseReason, Array.from(memoryWorkspace.probes), budget);
-            if (currentQueries.length === 0) break;
-            setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingReprobing', memoryWorkspace.impasseReason.substring(0, 40) + '...')] }));
+            if (memoryWorkspace.currentDraft) {
+                hooks.onLog?.('Analyzing draft for knowledge gaps to drive next search cycle...');
+                currentQueries = await analyzeDraftForGaps(memoryWorkspace.currentDraft, newNote.title || newNote.content.slice(0,120), Array.from(memoryWorkspace.probes), budget);
+            } else {
+                currentQueries = [];
+            }
+            if (currentQueries.length === 0) {
+                hooks.onLog?.('No new queries generated from draft. Ending context building.');
+                break; // Exit loop if no new research directions
+            }
         }
         
         currentQueries.forEach(q => memoryWorkspace.probes.add(q));
@@ -719,47 +867,57 @@ export const findSynapticLink = async (
             budget
         );
         const newCandIds = candIds.filter(id => !memoryWorkspace.retrievedNoteIds.has(id));
-        if (newCandIds.length === 0 && cycle > 1) break;
+        if (newCandIds.length === 0 && cycle > 1) {
+            hooks.onLog?.('No new notes found. Ending context building.');
+            break;
+        }
         
+        const newCandNotes = existingNotes.filter(n => newCandIds.includes(n.id) && n.parentChunks && n.parentChunks.length > 0);
+
+        if (newCandNotes.length > 0 && memoryWorkspace.currentDraft) {
+            setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingSynthesizing', newCandNotes.length)] }));
+            const updatedDraft = await integrateEvidenceIntoDraft(memoryWorkspace.currentDraft, newCandNotes, language);
+            memoryWorkspace.currentDraft = updatedDraft;
+            hooks.onLog?.(`Draft updated with evidence from ${newCandNotes.length} new note(s).`);
+            addDevLog({ source: 'agent', type: 'draft', content: updatedDraft });
+        }
+
         newCandIds.forEach(id => memoryWorkspace.retrievedNoteIds.add(id));
         
-        let candNotes = existingNotes.filter(n => memoryWorkspace.retrievedNoteIds.has(n.id) && n.parentChunks && n.parentChunks.length > 0);
-        if (candNotes.length === 0) continue;
+        memoryWorkspace.impasseReason = `Context built over ${cycle} cycle(s). Final draft is ready for insight generation.`;
+    }
 
-        const { results } = await runSynthesisAndRanking(newNote, candNotes, setLoadingState, t, language, Array.from(memoryWorkspace.probes), budget, []); // No feedback yet
-        
+    // --- Insight Generation Step (after context-building loop) ---
+    setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingSynthesizing', memoryWorkspace.retrievedNoteIds.size)] }));
+    const allRetrievedNotes = existingNotes.filter(n => memoryWorkspace.retrievedNoteIds.has(n.id) && n.parentChunks && n.parentChunks.length > 0);
+    if (allRetrievedNotes.length > 0) {
+        const { results } = await runSynthesisAndRanking(newNote, allRetrievedNotes, setLoadingState, t, language, Array.from(memoryWorkspace.probes), budget, [], memoryWorkspace.currentDraft);
         if (results.length > 0) {
-            const combined = [...memoryWorkspace.bestResults, ...results];
-            combined.sort((a,b) => (b.confidence ?? 0) - (a.confidence ?? 0));
-            const uniqueResults = Array.from(new Map(combined.map(r => [r.oldNoteId, r])).values());
+            const uniqueResults = Array.from(new Map(results.map(r => [r.oldNoteId, r])).values());
             memoryWorkspace.bestResults = uniqueResults.slice(0,3);
         }
+    }
 
-        // --- Multi-hop Expansion ---
-        if (budget.enableMultiHop && cycle > 0 && memoryWorkspace.bestResults.length > 0) {
-            const constellationInsight = await findBridgingInsight(
-                memoryWorkspace.bestResults[0], newNote, existingNotes, vectorStore, budget, language
-            );
-            if (constellationInsight) {
-                // Replace the top insight if the constellation is better
-                if ((constellationInsight.confidence ?? 0) > (memoryWorkspace.bestResults[0].confidence ?? 0)) {
-                    memoryWorkspace.bestResults.unshift(constellationInsight);
-                    const uniqueResults = Array.from(new Map(memoryWorkspace.bestResults.map(r => [r.oldNoteId, r])).values());
-                    memoryWorkspace.bestResults = uniqueResults.slice(0,3);
-                }
+    // --- Multi-hop Expansion ---
+    if (budget.enableMultiHop && memoryWorkspace.bestResults.length > 0) {
+        hooks.onLog?.('Checking for multi-hop constellation insights...');
+        const constellationInsight = await findBridgingInsight(
+            memoryWorkspace.bestResults[0], newNote, existingNotes, vectorStore, budget, language
+        );
+        if (constellationInsight) {
+            if ((constellationInsight.confidence ?? 0) > (memoryWorkspace.bestResults[0].confidence ?? 0)) {
+                memoryWorkspace.bestResults.unshift(constellationInsight);
+                const uniqueResults = Array.from(new Map(memoryWorkspace.bestResults.map(r => [r.oldNoteId, r])).values());
+                memoryWorkspace.bestResults = uniqueResults.slice(0,3);
+                hooks.onLog?.(`Found a superior constellation insight bridging via note ${constellationInsight.oldNoteId}.`);
             }
         }
+    }
 
+    // --- Agentic Refinement ---
+    if (tier === 'pro' && memoryWorkspace.bestResults.length > 0) {
         const topConfidence = memoryWorkspace.bestResults[0]?.confidence ?? 0;
-        if (topConfidence > 0.85 && cycle === 1) break; // Early exit on high confidence in first cycle
-
-        // --- Agentic Refinement (In-Loop) ---
-        if (
-            cycle < budget.maxCycles &&
-            memoryWorkspace.agenticRefinements < budget.maxAgenticRefinementsPerRun &&
-            memoryWorkspace.bestResults.length > 0 &&
-            topConfidence < 0.7
-        ) {
+        if (memoryWorkspace.agenticRefinements < budget.maxAgenticRefinementsPerRun && topConfidence < 0.7) {
             setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingRefining')] }));
             addDevLog({ source: 'system', type: 'info', content: 'Entering agentic refinement loop.' });
             const refined = await runAgenticRefinement({
@@ -772,44 +930,7 @@ export const findSynapticLink = async (
             if (refined) {
                 memoryWorkspace.bestResults[0] = refined;
                 memoryWorkspace.agenticRefinements++;
-                // Update confidence and impasse reason after refinement
-                const newTopConfidence = refined.confidence ?? 0;
-                memoryWorkspace.impasseReason = `After agentic refinement, conviction is ${(newTopConfidence * 100).toFixed(0)}%.`;
-            }
-        } else {
-            memoryWorkspace.impasseReason = `Best connection has conviction of only ${(topConfidence * 100).toFixed(0)}%. It may lack a clear mechanism or predictive power.`;
-        }
-
-        if (cycle < budget.maxCycles) {
-            const topResult = memoryWorkspace.bestResults[0];
-            const evTexts = topResult?.evidenceRefs.map(r => r.quote) ?? [];
-            const candidateScores = memoryWorkspace.bestResults.map(r => r.confidence ?? 0);
-
-            const sig = computeSignals({
-                queries: Array.from(memoryWorkspace.probes),
-                candidateScores,
-                evidenceTexts: evTexts
-            });
-
-            const est = {
-                tokens: evTexts.reduce((a, b) => a + estTokens(b), 0),
-                llmCalls: 1
-            };
-
-            logMetrics({
-                tier,
-                depthCycles: cycle,
-                tokensEstimated: est.tokens,
-                llmCalls: est.llmCalls,
-                candidateNotes: candNotes.length,
-                evidenceSnippets: topResult?.evidenceRefs.length ?? 0,
-                signals: sig,
-                mode: topResult?.mode,
-                latencyMs: Date.now() - startTime
-            });
-
-            if (!shouldDeepen(cycle, sig, budget)) {
-                break;
+                hooks.onLog?.('Insight refined using agentic loop.');
             }
         }
     }
@@ -820,6 +941,23 @@ export const findSynapticLink = async (
             r.thinkingProcess.retrievedCandidateIds = Array.from(memoryWorkspace.retrievedNoteIds);
         }
     });
+
+    // --- Self-Evolution Step ---
+    if (tier === 'pro' && budget.enableSelfEvolution && memoryWorkspace.bestResults.length > 0) {
+        hooks.onLog?.('Entering self-evolution stage to refine the final insight...');
+        setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingRefining')] }));
+        const insightToEvolve = memoryWorkspace.bestResults[0];
+        const evolvedInsightCore = await runSelfEvolution(insightToEvolve.insightCore, language);
+        if (evolvedInsightCore !== insightToEvolve.insightCore) {
+            insightToEvolve.insightCore = evolvedInsightCore;
+            if(insightToEvolve.thinkingProcess) {
+                insightToEvolve.thinkingProcess.rankingRationale += ' | Evolved via multi-variant merging.';
+            }
+            insightToEvolve.confidence = Math.min(1.0, (insightToEvolve.confidence ?? 0.7) * 1.1); // Boost confidence
+            hooks.onLog?.('Self-evolution complete. Insight has been merged from multiple variants.');
+            addDevLog({ source: 'agent', type: 'insight-evolved', content: evolvedInsightCore });
+        }
+    }
 
     const finalResults = await postProcessWithAgentic({ tier, newNote, results: memoryWorkspace.bestResults });
 
