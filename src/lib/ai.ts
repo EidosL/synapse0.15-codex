@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, Type, Schema } from '@google/genai';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Note, Insight, InsightThinkingProcess, ParentChunk, SearchDepth, Hypothesis, EurekaMarkers, SerendipityInfo } from './types';
 import type { VectorStore } from './vectorStore';
@@ -37,42 +37,19 @@ export const ai = aiInstance;
 const CHINESE_OUTPUT_INSTRUCTION = "\n\nCRITICAL: You MUST respond exclusively in Simplified Chinese.";
 
 export const safeParseGeminiJson = <T,>(text: string): T | null => {
-    let jsonText = text.trim();
-
-    // 1. Attempt to find a JSON blob within markdown fences
-    const markdownMatch = jsonText.match(/```(json)?\s*([\s\S]*?)\s*```/);
-    if (markdownMatch && markdownMatch[2]) {
-        jsonText = markdownMatch[2].trim();
-    } else {
-        // 2. If no fences, find the first '{' or '[' and the last '}' or ']' to extract a potential JSON object/array.
-        const firstBracket = jsonText.indexOf('[');
-        const firstBrace = jsonText.indexOf('{');
-        
-        let start = -1;
-        if (firstBracket === -1) start = firstBrace;
-        else if (firstBrace === -1) start = firstBracket;
-        else start = Math.min(firstBracket, firstBrace);
-
-        if (start !== -1) {
-            const lastBracket = jsonText.lastIndexOf(']');
-            const lastBrace = jsonText.lastIndexOf('}');
-            const end = Math.max(lastBracket, lastBrace);
-            
-            if (end > start) jsonText = jsonText.substring(start, end + 1);
-        }
-    }
-    
-    if (jsonText.toLowerCase() === 'null') return null;
+    const jsonText = text.trim();
+    if (!jsonText || jsonText.toLowerCase() === 'null') return null;
 
     try {
+        // Standard parsing
         return JSON.parse(jsonText) as T;
     } catch (error) {
         console.warn("Initial JSON parsing failed. Attempting to repair common LLM errors.", error);
         try {
+            // Attempt to fix common LLM error of unescaped backslashes in strings
             const repairedJsonText = jsonText.replace(/\\(?![bfnrt"\\/])/g, '\\\\');
             return JSON.parse(repairedJsonText) as T;
-        }
-        catch (repairError) {
+        } catch (repairError) {
             console.error("Failed to parse Gemini JSON response, even after repair attempt:", repairError);
             console.error("Original text:", text);
             return null;
@@ -106,15 +83,16 @@ Document Content:\n---\n${text.slice(0, 20000)}\n---\nReturn ONLY the JSON array
     // DO NOT add language instructions for JSON-only endpoints. It can corrupt the output.
 
     try {
-        const response = await ai.models.generateContent({
+        const result = await ai.models.generateContent({
             model: MODEL_NAME,
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            config: {
+            generationConfig: {
                 responseMimeType: 'application/json',
                 responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
             }
         });
-        const chunks = safeParseGeminiJson<string[]>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
+        const response = result.response;
+        const chunks = safeParseGeminiJson<string[]>(response.text());
         return buildStructure((chunks && chunks.length > 0) ? chunks : [text]);
     } catch (error) {
         console.error("Semantic chunking failed:", error);
@@ -144,7 +122,7 @@ export const generateBatchEmbeddings = async (texts: string[]): Promise<number[]
 
 // --- New Insight Generation Engine (based on "The Architecture of Insight") ---
 
-const INSIGHT_SCHEMA = {
+const INSIGHT_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
     mode: { type: Type.STRING, description: "Mode of insight: 'eureka' for restructuring, 'serendipity' for accidental discovery, or 'none'." },
@@ -242,27 +220,27 @@ ${evidenceChunks.map(c => `[${c.noteId}::${c.childId}] ${c.text}`).join('\n')}
 ---`;
     
     try {
-        const response = await ai.models.generateContent({
+        const result = await ai.models.generateContent({
             model: MODEL_NAME,
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            config: {
+            generationConfig: {
                 responseMimeType: 'application/json',
-                // @ts-ignore
                 responseSchema: INSIGHT_SCHEMA,
                 temperature
             }
         });
-        const result = safeParseGeminiJson<InsightPayload>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
-        if (result && result.mode !== 'none') {
+        const response = result.response;
+        const payload = safeParseGeminiJson<InsightPayload>(response.text());
+        if (payload && payload.mode !== 'none') {
             // Precise quote validation
             const chunkMap = new Map<string, string>();
             evidenceChunks.forEach(c => chunkMap.set(`${c.noteId}::${c.childId}`, c.text));
             
-            result.evidenceRefs = result.evidenceRefs.filter(ref => {
+            payload.evidenceRefs = payload.evidenceRefs.filter(ref => {
                 const sourceText = chunkMap.get(`${ref.noteId}::${ref.childId}`);
                 return sourceText ? sourceText.includes(ref.quote) : false;
             });
-            return result;
+            return payload;
         }
         return null;
     } catch (error) {
@@ -286,10 +264,10 @@ const generateSearchQueries = async (note: Note, budget: Budget): Promise<string
     const cheap = cheapExpandQueries(topic);
     if (!ai) return Object.values(cheap).slice(0, budget.maxQueries);
     try {
-        const response = await ai.models.generateContent({
+        const result = await ai.models.generateContent({
             model: MODEL_NAME,
             contents: [{ role: 'user', parts: [{ text: `Return JSON with ANY subset of keys: ${RELATIONS.join(', ')}. Each value must be a concise search query derived from:\nTitle: ${note.title ?? ''}\nContent: ${note.content.slice(0, 1000)}` }] }],
-            config: {
+            generationConfig: {
                 responseMimeType: "application/json", responseSchema: {
                     type: Type.OBJECT, properties: RELATIONS.reduce((acc: { [key: string]: { type: Type.STRING } }, key) => {
                         acc[key] = { type: Type.STRING };
@@ -298,7 +276,8 @@ const generateSearchQueries = async (note: Note, budget: Budget): Promise<string
                 }
             }
         });
-        const obj = safeParseGeminiJson<Record<string, string>>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '') || {};
+        const response = result.response;
+        const obj = safeParseGeminiJson<Record<string, string>>(response.text()) || {};
         return Array.from(new Set([...Object.values(obj).filter(Boolean), ...Object.values(cheap)])).slice(0, budget.maxQueries);
     } catch (error) {
         console.error("Error generating search queries, using fallback:", error);
@@ -384,16 +363,17 @@ Generate a JSON array of 2 new, diverse search queries to overcome this failure.
 - Q2: Query for an analogy from a distant domain (e.g., biology, economics, physics) to reframe the problem.
 Return ONLY the JSON array of strings.`;
     try {
-        const response = await ai.models.generateContent({
+        const result = await ai.models.generateContent({
             model: MODEL_NAME,
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            config: {
+            generationConfig: {
                 responseMimeType: "application/json",
                 responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } },
                 temperature: budget.tempProbe
             }
         });
-        return safeParseGeminiJson<string[]>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '') || [];
+        const response = result.response;
+        return safeParseGeminiJson<string[]>(response.text()) || [];
     } catch (e) {
         console.error("Self-probing failed:", e);
         return [];
@@ -527,26 +507,26 @@ ${evidenceChunks.map(c => `[${c.noteId}::${c.childId}] ${c.text}`).join('\n')}
 ---`;
 
     try {
-        const response = await ai.models.generateContent({
+        const result = await ai.models.generateContent({
             model: MODEL_NAME,
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            config: {
+            generationConfig: {
                 responseMimeType: 'application/json',
-                // @ts-ignore
                 responseSchema: INSIGHT_SCHEMA,
                 temperature
             }
         });
-        const result = safeParseGeminiJson<InsightPayload>(response.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
-        if (result && result.mode !== 'none') {
+        const response = result.response;
+        const payload = safeParseGeminiJson<InsightPayload>(response.text());
+        if (payload && payload.mode !== 'none') {
             const chunkMap = new Map<string, string>();
             evidenceChunks.forEach(c => chunkMap.set(`${c.noteId}::${c.childId}`, c.text));
 
-            result.evidenceRefs = result.evidenceRefs.filter(ref => {
+            payload.evidenceRefs = payload.evidenceRefs.filter(ref => {
                 const sourceText = chunkMap.get(`${ref.noteId}::${ref.childId}`);
                 return sourceText ? sourceText.includes(ref.quote) : false;
             });
-            return result;
+            return payload;
         }
         return null;
     } catch (error) {
