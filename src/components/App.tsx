@@ -1,5 +1,6 @@
-import React, { useRef, useCallback } from 'react';
+import React, { useRef, useCallback, useEffect } from 'react';
 import { useStore } from '../lib/store';
+import { useLogStore } from '../lib/logStore';
 
 import { NoteEditor } from './NoteEditor';
 import { NoteViewer } from './NoteViewer';
@@ -25,6 +26,26 @@ export const App: React.FC = () => {
     
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { t, toggleLanguage } = useTranslation();
+
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('dev_mode') === 'true') {
+            const devWindow = window.open('/dev-monitor.html', 'SynapseDevMonitor');
+
+            const handleDevMonitorMessage = (event: MessageEvent) => {
+                if (event.source === devWindow && event.data.type === 'dev-monitor-ready') {
+                    useLogStore.getState().setDevWindow(devWindow);
+                }
+            };
+
+            window.addEventListener('message', handleDevMonitorMessage);
+
+            return () => {
+                window.removeEventListener('message', handleDevMonitorMessage);
+                useLogStore.getState().setDevWindow(null);
+            };
+        }
+    }, []);
 
 
     const handleUploadClick = () => fileInputRef.current?.click();

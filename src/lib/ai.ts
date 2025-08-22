@@ -15,6 +15,8 @@ import { maybeAutoDeepen } from '../agentic/autoController';
 import { searchWeb } from '../agentic/adapters/searchWeb';
 import { mindMapTool } from '../agentic/adapters/mindMapTool';
 import { verifyCandidates } from '../insight/verifier';
+import { useLogStore } from './logStore';
+import type { ToolResult } from '../agentic/types';
 
 
 // --- API & AI ---
@@ -620,9 +622,9 @@ const findBridgingInsight = async (
 
 
 const runAgenticRefinement = async ({
-    insight, tier, topic, budget
+    insight, tier, topic, budget, hooks
 }: {
-    insight: InsightResult; tier: Tier; topic: string; budget: Budget;
+    insight: InsightResult; tier: Tier; topic: string; budget: Budget; hooks: { onLog: (s:string)=>void, onTool: (r:ToolResult)=>void }
 }): Promise<InsightResult | null> => {
     if (tier !== 'pro') return null;
 
@@ -634,7 +636,7 @@ const runAgenticRefinement = async ({
         insightCore: insight.insightCore || 'Candidate insight',
         evidenceTexts,
         tools: { web: searchWeb, mind: mindMapTool() },
-        hooks: { onLog: console.debug, onTool: console.debug },
+        hooks,
         budget
     });
 
@@ -694,6 +696,19 @@ export const findSynapticLink = async (
     language: Language = 'en', t: TFunction, tier: Tier = 'pro'
 ): Promise<InsightResult[]> => {
     if (existingNotes.length === 0) return [];
+
+    const { startRun, addThinkingStep, addDevLog } = useLogStore.getState();
+    startRun();
+
+    const hooks = {
+        onLog: (log: string) => {
+            addThinkingStep(log);
+            addDevLog({ source: 'agent', type: 'plan', content: log });
+        },
+        onTool: (toolResult: ToolResult) => {
+            addDevLog({ source: 'tool', type: 'result', content: toolResult });
+        },
+    };
 
     const startTime = Date.now();
     const budget = policyFor(tier);
@@ -766,11 +781,13 @@ export const findSynapticLink = async (
             topConfidence < 0.7
         ) {
             setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingRefining')] }));
+            addDevLog({ source: 'system', type: 'info', content: 'Entering agentic refinement loop.' });
             const refined = await runAgenticRefinement({
                 insight: memoryWorkspace.bestResults[0],
                 tier,
                 topic: newNote.title || newNote.content.slice(0, 120),
-                budget
+                budget,
+                hooks,
             });
             if (refined) {
                 memoryWorkspace.bestResults[0] = refined;
