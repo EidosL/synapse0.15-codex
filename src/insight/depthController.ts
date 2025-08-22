@@ -1,6 +1,6 @@
 import type { Budget } from './budget';
 import type { Signals } from './signals';
-import { computeSimEst, computeDeltaS } from './signals';
+import { computeSimEst } from './signals';
 import { InsightDynamicsController } from './insightDynamicsController';
 
 /**
@@ -9,6 +9,7 @@ import { InsightDynamicsController } from './insightDynamicsController';
  */
 export class DepthController {
   private currentDepth = 0;
+  private sim_est_prev = 0;
   private wfgyController: InsightDynamicsController;
 
   constructor(private budget: Budget) {
@@ -29,12 +30,14 @@ export class DepthController {
     }
     this.currentDepth++;
 
-    // Calculate the core tension signal for the current state.
+    // Calculate the core similarity estimate for the current state.
     const sim_est = computeSimEst(signals);
-    const delta_s = computeDeltaS(sim_est);
 
     // Update the WFGY controller with the new signal.
-    this.wfgyController.update(delta_s);
+    this.wfgyController.update(sim_est, signals, this.sim_est_prev);
+
+    // Update the previous similarity estimate for the next iteration
+    this.sim_est_prev = sim_est;
 
     // The decision to continue is now governed by the WFGY progression guards.
     return this.wfgyController.isBridgeAllowed();
