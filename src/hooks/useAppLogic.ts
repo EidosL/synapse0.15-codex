@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as pdfjsLib from 'https://esm.sh/pdfjs-dist@4.5.136';
 
+import { useLogStore } from '../lib/logStore';
 import { useStoredState } from './useStoredState';
 import { VectorStore } from '../lib/vectorStore';
 import { ai, generateBatchEmbeddings, findSynapticLink, semanticChunker } from '../lib/ai';
@@ -27,6 +28,19 @@ export const useAppLogic = () => {
         if (depth === 'deep') return 'pro';
         return 'free';
     };
+
+    // This effect synchronizes the centralized log store with the local loading state UI
+    useEffect(() => {
+        const unsubscribe = useLogStore.subscribe(
+            (state) => state.thinkingSteps,
+            (thinkingSteps) => {
+                if (thinkingSteps.length > 0) {
+                    setLoadingState(prev => ({ ...prev, messages: thinkingSteps }));
+                }
+            }
+        );
+        return unsubscribe;
+    }, []);
 
     useEffect(() => {
         const indexExistingNotes = async () => {
@@ -219,7 +233,8 @@ export const useAppLogic = () => {
         if (!noteToProcess) return;
 
         setIsFindingLinks(noteId);
-        setLoadingState({ active: true, messages: [t('findingConnectionsFor', noteToProcess.title)] });
+        // Set loading to active, but let the log store handle the messages
+        setLoadingState({ active: true, messages: [] });
 
         const existingNotes = notes.filter(n => n.id !== noteId);
         const links = await findSynapticLink(noteToProcess, existingNotes, setLoadingState, vectorStore.current, language, t, depthToTier(searchDepth));
