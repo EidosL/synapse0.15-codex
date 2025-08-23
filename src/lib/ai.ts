@@ -842,111 +842,105 @@ export const findSynapticLink = async (
         },
     };
 
-    const startTime = Date.now();
     const budget = policyFor(tier);
 
+    // --- New Cluster-based Candidate Selection ---
+    hooks.onLog('Finding connections via backend clustering...');
+    setLoadingState({ active: true, messages: [t('thinkingSearching')] }); // Using an existing translation key
+
+    // We need to include the new note in the request to the backend
+    const allNotesForClustering = [newNote, ...existingNotes];
+    const clusterResult = await findClusters(allNotesForClustering);
+
+    if (!clusterResult || clusterResult.cluster_summaries.length === 0) {
+        hooks.onLog('Backend clustering returned no results. Aborting.');
+        setLoadingState({ active: false, messages: [] });
+        return [];
+    }
+    hooks.onLog(`Received ${clusterResult.cluster_summaries.length} clusters from backend.`);
+
+    // The backend chunker needs to be consistent with the frontend chunker for this to work.
+    // The frontend chunk ID is `${note.id}:${parent_index}:${child_index}`.
+    const newNoteChunkIds = newNote.parentChunks?.flatMap(
+        (pc, p_idx) => pc.children.map((c, c_idx) => `${newNote.id}:${p_idx}:${c_idx}`)
+    ) ?? [];
+
+    const relevantClusterIds = new Set<number>();
+    for (const chunkId of newNoteChunkIds) {
+        if (chunkId in clusterResult.chunk_to_cluster_map) {
+            relevantClusterIds.add(clusterResult.chunk_to_cluster_map[chunkId]);
+        }
+    }
+
+    if (relevantClusterIds.size === 0) {
+        hooks.onLog('Could not map the new note to any cluster. Aborting.');
+        setLoadingState({ active: false, messages: [] });
+        return [];
+    }
+    hooks.onLog(`New note is part of ${relevantClusterIds.size} cluster(s).`);
+
+    const candidateChunkIds = new Set<string>();
+    for (const [chunkId, clusterId] of Object.entries(clusterResult.chunk_to_cluster_map)) {
+        if (relevantClusterIds.has(clusterId)) {
+            candidateChunkIds.add(chunkId);
+        }
+    }
+
+    const candidateNoteIds = new Set<string>();
+    for (const chunkId of candidateChunkIds) {
+        const noteId = chunkId.split(':')[0];
+        if (noteId !== newNote.id) {
+            candidateNoteIds.add(noteId);
+        }
+    }
+
+    const candidateNotes = existingNotes.filter(n => candidateNoteIds.has(n.id) && n.parentChunks && n.parentChunks.length > 0);
+
+    if (candidateNotes.length === 0) {
+        hooks.onLog('No other notes found in the same cluster(s). No connections found.');
+        setLoadingState({ active: false, messages: [] });
+        return [];
+    }
+    hooks.onLog(`Found ${candidateNotes.length} candidate notes from clusters.`);
+
+    // --- Synthesis and Ranking (using the old powerful engine) ---
+    // The old iterative context building loop is now replaced by the single clustering call.
+    // We now feed the high-quality candidates directly into the synthesis engine.
+
+    const clusterSummariesAsQueries = clusterResult.cluster_summaries
+        .filter(s => relevantClusterIds.has(s.cluster_id))
+        .map(s => s.summary);
+
+    const { results } = await runSynthesisAndRanking(
+        newNote,
+        candidateNotes,
+        setLoadingState,
+        t,
+        language,
+        clusterSummariesAsQueries, // Use summaries as search queries
+        budget,
+        [],
+        null // No guiding draft, as the iterative process is gone
+    );
+
     let memoryWorkspace = {
-        probes: new Set<string>(), retrievedNoteIds: new Set<string>(),
-        bestResults: [] as InsightResult[], impasseReason: "Initial search.",
-        agenticRefinements: 0,
-        currentDraft: null as string | null,
-        hasHighNoveltyInsight: false,
+        bestResults: [] as InsightResult[],
+        probes: new Set<string>(clusterSummariesAsQueries), // Store for logging
+        retrievedNoteIds: new Set<string>(candidateNoteIds), // Store for logging
     };
 
-    memoryWorkspace.currentDraft = await generateInitialDraft(newNote, language);
-    if (memoryWorkspace.currentDraft) {
-        hooks.onLog?.(`Initial draft generated: "${memoryWorkspace.currentDraft.slice(0, 100)}..."`);
-        addDevLog({ source: 'agent', type: 'draft', content: memoryWorkspace.currentDraft });
+    if (results.length > 0) {
+        const uniqueResults = Array.from(new Map(results.map(r => [r.oldNoteId, r])).values());
+        memoryWorkspace.bestResults = uniqueResults.slice(0, 3);
+    } else {
+        hooks.onLog('Synthesis engine did not produce any insights from the candidates.');
+        setLoadingState({ active: false, messages: [] });
+        return [];
     }
 
-    let cycle = 0;
-    // This is now a context-building loop
-    for (cycle = 1; cycle <= budget.maxCycles; cycle++) {
-        let currentQueries: string[];
-        if (cycle === 1) {
-            setLoadingState({ active: true, messages: [t('thinkingBrainstorming')] });
-            currentQueries = await generateSearchQueries(newNote, budget);
-        } else {
-            setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingReflecting')] }));
-            if (memoryWorkspace.currentDraft) {
-                hooks.onLog?.('Analyzing draft for knowledge gaps to drive next search cycle...');
-                const gapQueries = await analyzeDraftForGaps(memoryWorkspace.currentDraft, newNote.title || newNote.content.slice(0,120), Array.from(memoryWorkspace.probes), budget);
+    // --- Post-processing (Multi-hop, Agentic Refinement, etc.) ---
+    // This part of the pipeline can remain as it enhances the results from synthesis.
 
-                // Add a divergent question to spark creativity
-                const divergentQuestion = await generateDivergentQuestion(memoryWorkspace.currentDraft, language, ai);
-                if (divergentQuestion) {
-                    hooks.onLog?.(`Injecting divergent question: "${divergentQuestion}"`);
-                    currentQueries = [...gapQueries, divergentQuestion];
-                } else {
-                    currentQueries = gapQueries;
-                }
-            } else {
-                currentQueries = [];
-            }
-            if (currentQueries.length === 0) {
-                hooks.onLog?.('No new queries generated from draft. Ending context building.');
-                break; // Exit loop if no new research directions
-            }
-        }
-        
-        currentQueries.forEach(q => memoryWorkspace.probes.add(q));
-
-        setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingSearching')] }));
-        const candIds = await retrieveCandidateNotesHQ(
-            Array.from(memoryWorkspace.probes), vectorStore, existingNotes, newNote.id,
-            budget
-        );
-        const newCandIds = candIds.filter(id => !memoryWorkspace.retrievedNoteIds.has(id));
-        if (newCandIds.length === 0 && cycle > 1) {
-            hooks.onLog?.('No new notes found. Ending context building.');
-            break;
-        }
-        
-        const newCandNotes = existingNotes.filter(n => newCandIds.includes(n.id) && n.parentChunks && n.parentChunks.length > 0);
-
-        if (newCandNotes.length > 0 && memoryWorkspace.currentDraft) {
-            setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingSynthesizing', newCandNotes.length)] }));
-            const updatedDraft = await integrateEvidenceIntoDraft(memoryWorkspace.currentDraft, newCandNotes, language);
-            memoryWorkspace.currentDraft = updatedDraft;
-            hooks.onLog?.(`Draft updated with evidence from ${newCandNotes.length} new note(s).`);
-            addDevLog({ source: 'agent', type: 'draft', content: updatedDraft });
-        }
-
-        newCandIds.forEach(id => memoryWorkspace.retrievedNoteIds.add(id));
-        
-        memoryWorkspace.impasseReason = `Context built over ${cycle} cycle(s). Final draft is ready for insight generation.`;
-
-        // --- Novelty Evaluation Step ---
-        if (memoryWorkspace.currentDraft) {
-            const noveltyScore = await evaluateNovelty(memoryWorkspace.currentDraft, ai);
-            hooks.onLog?.(`Draft novelty score: ${noveltyScore.toFixed(1)}/10`);
-            const currentScores = useStore.getState().novelty_scores;
-            useStore.setState({ novelty_scores: [...currentScores, noveltyScore] });
-            if (noveltyScore >= 6.5) {
-                memoryWorkspace.hasHighNoveltyInsight = true;
-            }
-        }
-
-        // Extend the search if budget is exhausted but no novel insight has been found
-        const MAX_CYCLES_HARD_LIMIT = budget.maxCycles + 2; // Allow up to 2 extensions
-        if (cycle === budget.maxCycles && !memoryWorkspace.hasHighNoveltyInsight && cycle < MAX_CYCLES_HARD_LIMIT) {
-            hooks.onLog?.('No high-novelty insight found yet. Extending research by one cycle to seek novelty.');
-            budget.maxCycles++;
-        }
-    }
-
-    // --- Insight Generation Step (after context-building loop) ---
-    setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingSynthesizing', memoryWorkspace.retrievedNoteIds.size)] }));
-    const allRetrievedNotes = existingNotes.filter(n => memoryWorkspace.retrievedNoteIds.has(n.id) && n.parentChunks && n.parentChunks.length > 0);
-    if (allRetrievedNotes.length > 0) {
-        const { results } = await runSynthesisAndRanking(newNote, allRetrievedNotes, setLoadingState, t, language, Array.from(memoryWorkspace.probes), budget, [], memoryWorkspace.currentDraft);
-        if (results.length > 0) {
-            const uniqueResults = Array.from(new Map(results.map(r => [r.oldNoteId, r])).values());
-            memoryWorkspace.bestResults = uniqueResults.slice(0,3);
-        }
-    }
-
-    // --- Multi-hop Expansion ---
     if (budget.enableMultiHop && memoryWorkspace.bestResults.length > 0) {
         hooks.onLog?.('Checking for multi-hop constellation insights...');
         const constellationInsight = await findBridgingInsight(
@@ -956,16 +950,15 @@ export const findSynapticLink = async (
             if ((constellationInsight.confidence ?? 0) > (memoryWorkspace.bestResults[0].confidence ?? 0)) {
                 memoryWorkspace.bestResults.unshift(constellationInsight);
                 const uniqueResults = Array.from(new Map(memoryWorkspace.bestResults.map(r => [r.oldNoteId, r])).values());
-                memoryWorkspace.bestResults = uniqueResults.slice(0,3);
+                memoryWorkspace.bestResults = uniqueResults.slice(0, 3);
                 hooks.onLog?.(`Found a superior constellation insight bridging via note ${constellationInsight.oldNoteId}.`);
             }
         }
     }
 
-    // --- Agentic Refinement ---
     if (tier === 'pro' && memoryWorkspace.bestResults.length > 0) {
         const topConfidence = memoryWorkspace.bestResults[0]?.confidence ?? 0;
-        if (memoryWorkspace.agenticRefinements < budget.maxAgenticRefinementsPerRun && topConfidence < 0.7) {
+        if (topConfidence < 0.7) { // Simplified condition
             setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingRefining')] }));
             addDevLog({ source: 'system', type: 'info', content: 'Entering agentic refinement loop.' });
             const refined = await runAgenticRefinement({
@@ -977,7 +970,6 @@ export const findSynapticLink = async (
             });
             if (refined) {
                 memoryWorkspace.bestResults[0] = refined;
-                memoryWorkspace.agenticRefinements++;
                 hooks.onLog?.('Insight refined using agentic loop.');
             }
         }
@@ -990,7 +982,6 @@ export const findSynapticLink = async (
         }
     });
 
-    // --- Self-Evolution Step ---
     if (tier === 'pro' && budget.enableSelfEvolution && memoryWorkspace.bestResults.length > 0) {
         hooks.onLog?.('Entering self-evolution stage to refine the final insight...');
         setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingRefining')] }));
@@ -1001,7 +992,7 @@ export const findSynapticLink = async (
             if(insightToEvolve.thinkingProcess) {
                 insightToEvolve.thinkingProcess.rankingRationale += ' | Evolved via multi-variant merging.';
             }
-            insightToEvolve.confidence = Math.min(1.0, (insightToEvolve.confidence ?? 0.7) * 1.1); // Boost confidence
+            insightToEvolve.confidence = Math.min(1.0, (insightToEvolve.confidence ?? 0.7) * 1.1);
             hooks.onLog?.('Self-evolution complete. Insight has been merged from multiple variants.');
             addDevLog({ source: 'agent', type: 'insight-evolved', content: evolvedInsightCore });
         }
@@ -1009,5 +1000,60 @@ export const findSynapticLink = async (
 
     const finalResults = await postProcessWithAgentic({ tier, newNote, results: memoryWorkspace.bestResults });
 
+    setLoadingState({ active: false, messages: [] });
     return finalResults;
+};
+
+// --- New Backend Clustering Integration ---
+
+import { ClusteringResult } from './types';
+
+/**
+ * Calls the backend to cluster notes and get summaries.
+ * @param notes The full list of notes to be clustered.
+ * @returns The clustering result from the backend.
+ */
+export const findClusters = async (notes: Note[]): Promise<ClusteringResult | null> => {
+    // The backend endpoint is running on localhost:8000
+    const API_URL = 'http://localhost:8000/cluster_chunks';
+
+    // Extract all chunks from all notes into the format expected by the backend.
+    // The chunk ID format `${note.id}:${p_idx}:${c_idx}` is crucial for mapping the results back.
+    const allChunks = notes.flatMap(note =>
+        note.parentChunks?.flatMap((pc, p_idx) =>
+            pc.children.map((child, c_idx) => ({
+                id: `${note.id}:${p_idx}:${c_idx}`,
+                document_id: note.id,
+                text: child.text,
+            }))
+        ) ?? []
+    );
+
+    if (allChunks.length === 0) {
+        console.log("No chunks found in notes to send for clustering.");
+        return null;
+    }
+
+    try {
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ chunks: allChunks }),
+        });
+
+        if (!response.ok) {
+            const errorBody = await response.text();
+            console.error('Failed to fetch clusters. Server responded with:', response.status, errorBody);
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result: ClusteringResult = await response.json();
+        return result;
+
+    } catch (error) {
+        console.error('Error calling the clustering backend:', error);
+        return null;
+    }
 };
