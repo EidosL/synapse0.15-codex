@@ -125,3 +125,27 @@ export interface KnowledgeGraph {
     nodes: SummaryNode[];
     relations: SummaryRelation[];
 }
+
+// --- Types for the new backend clustering ---
+
+export interface BackendDocument {
+    id: string;
+    title: string;
+    content: string;
+}
+
+export interface ClusterRequest {
+    notes: BackendDocument[];
+}
+
+export interface ClusterSummary {
+    cluster_id: number;
+    summary: string;
+    // We might want to add more fields from the backend if available
+    // For now, this matches the Python model
+}
+
+export interface ClusteringResult {
+    chunk_to_cluster_map: Record<string, number>; // Maps chunk_id to cluster_id
+    cluster_summaries: ClusterSummary[];
+}

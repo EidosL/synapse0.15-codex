@@ -7,17 +7,34 @@ import langextract as lx
 import httpx
 
 # Imports for the new Eureka RAG pipeline
-from src.eureka_rag.models import ClusterRequest, ClusteringResult
-from src.eureka_rag.main import run_pipeline
+from src.eureka_rag.models import ClusterRequest, ClusteringResult, ClusterChunksRequest
+from src.eureka_rag.main import run_pipeline, run_chunk_pipeline
 
 
 app = FastAPI()
+
+@app.post("/cluster_chunks", response_model=ClusteringResult)
+def cluster_chunks(req: ClusterChunksRequest):
+    """
+    Receives a list of pre-chunked texts and processes them through the Eureka RAG pipeline.
+    This is the new primary endpoint for the frontend integration.
+    """
+    if not req.chunks:
+        return ClusteringResult(chunk_to_cluster_map={}, cluster_summaries=[])
+
+    try:
+        # This function orchestrates the backend pipeline starting from chunks
+        result = run_chunk_pipeline(req.chunks)
+        return result
+    except Exception as e:
+        print(f"Error during chunk clustering pipeline: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred in the chunk clustering pipeline: {e}")
 
 
 @app.post("/cluster_and_summarize", response_model=ClusteringResult)
 def cluster_and_summarize(req: ClusterRequest):
     """
-    Receives a list of notes, processes them through the Eureka RAG pipeline
+    (Legacy) Receives a list of notes, processes them through the Eureka RAG pipeline
     to find clusters and generate summaries for them.
     """
     if not req.notes:

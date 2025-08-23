@@ -24,6 +24,16 @@ class ClusteringResult(BaseModel):
     chunk_to_cluster_map: Dict[str, int]  # Maps chunk_id to cluster_id
     cluster_summaries: List[ClusterSummary]
 
+class ChunkInput(BaseModel):
+    """Represents a single chunk of text sent from the frontend."""
+    id: str
+    document_id: str
+    text: str
+
+class ClusterChunksRequest(BaseModel):
+    """The request model for clustering pre-chunked text."""
+    chunks: List[ChunkInput]
+
 class ClusterRequest(BaseModel):
     """The request model for the clustering endpoint, containing all notes."""
     notes: List[Document]
