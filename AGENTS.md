@@ -26,6 +26,18 @@ The agent follows these steps:
 *   `src/agentic/types.ts`: Defines the data structures used by the agent, including the `ToolResult` type.
 *   `src/agentic/adapters/`: Contains the code that connects the agent's abstract tool definitions to concrete implementations (e.g., calling the SerpAPI for web search).
 
+## AI Orchestration
+
+While the Insight Generator agent is a key component, it does not run on its own. The entire end-to-end process for finding connections between notes is orchestrated by the `findSynapticLink` function within `src/lib/ai.ts`.
+
+This orchestrator is responsible for:
+1.  Calling the backend to perform note clustering to find relevant candidate notes.
+2.  Running the initial insight synthesis process.
+3.  **Invoking the Insight Generator agent** via the `runAgenticRefinement` function to deepen the analysis on promising insights.
+4.  Managing other post-processing steps like multi-hop searches and self-evolution.
+
+Therefore, if you are debugging the overall "find connections" feature, `src/lib/ai.ts` is your starting point. If you are specifically working on the agent's behavior (e.g., its planning or tool use), you should focus on the files listed above.
+
 ## Note on the other "agent"
 
 The directory `src/agents/` contains a different kind of agent loop (`src/agents/agentLoop.ts`). This appears to be a multi-agent conversation simulator. It is not currently integrated into the main Project Synapse application and should be considered a separate, experimental feature. For any work related to the user-facing "AI features" of Project Synapse, you should focus on the Insight Generator agent in `src/agentic/`.
