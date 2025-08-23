@@ -3,3 +3,6 @@ pydantic
 langextract
 uvicorn
 httpx
+scikit-learn
+numpy
+sentence-transformers

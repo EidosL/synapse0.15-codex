@@ -1,0 +1,19 @@
+{
+  "notes": [
+    {
+      "id": "note1",
+      "title": "Quantum Physics",
+      "content": "Quantum mechanics is a fundamental theory in physics that provides a description of the physical properties of nature at the scale of atoms and subatomic particles. It is the foundation of all quantum physics including quantum chemistry, quantum field theory, quantum technology, and quantum information science."
+    },
+    {
+      "id": "note2",
+      "title": "Machine Learning",
+      "content": "Machine learning is a field of inquiry devoted to understanding and building methods that 'learn', that is, methods that leverage data to improve performance on some set of tasks. It is seen as a part of artificial intelligence. Machine learning algorithms build a model based on sample data, known as training data, in order to make predictions or decisions without being explicitly programmed to do so."
+    },
+    {
+        "id": "note3",
+        "title": "Quantum Computing",
+        "content": "Quantum computing is a type of computation that harnesses the collective properties of quantum states, such as superposition, interference, and entanglement, to perform calculations. The devices that perform quantum computations are known as quantum computers. They are believed to be able to solve certain computational problems, such as integer factorization, substantially faster than classical computers."
+    }
+  ]
+}

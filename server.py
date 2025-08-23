@@ -6,7 +6,33 @@ import os
 import langextract as lx
 import httpx
 
+# Imports for the new Eureka RAG pipeline
+from src.eureka_rag.models import ClusterRequest, ClusteringResult
+from src.eureka_rag.main import run_pipeline
+
+
 app = FastAPI()
+
+
+@app.post("/cluster_and_summarize", response_model=ClusteringResult)
+def cluster_and_summarize(req: ClusterRequest):
+    """
+    Receives a list of notes, processes them through the Eureka RAG pipeline
+    to find clusters and generate summaries for them.
+    """
+    if not req.notes:
+        return ClusteringResult(chunk_to_cluster_map={}, cluster_summaries=[])
+
+    try:
+        # This function orchestrates the entire backend pipeline
+        result = run_pipeline(req.notes)
+        return result
+    except Exception as e:
+        # It's good practice to catch potential errors from the pipeline
+        # and return a proper HTTP exception.
+        # In a real-world app, you'd want more specific logging here.
+        print(f"Error during clustering pipeline: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred in the clustering pipeline: {e}")
 
 class ExampleExtraction(BaseModel):
     extraction_class: str
