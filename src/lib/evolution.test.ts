@@ -7,9 +7,7 @@ import type { GoogleGenAI } from '@google/genai';
 // Helper to create a mock AI object for testing
 const createMockAi = () => ({
     models: {
-        generateContent: async () => ({
-            response: { text: () => '' }
-        })
+        generateContentStream: async () => (async function*(){ yield { text: '' }; })()
     }
 });
 
@@ -19,32 +17,33 @@ test('runSelfEvolution should include an analogy-focused variant', async (t) => 
     // We create a mock AI to stand in for the real one.
     const mockAi = createMockAi();
 
-    const generateContentMock = mock.fn(mockAi.models.generateContent, async (req: any) => {
+    const asStream = (text: string) => (async function*(){ yield { text }; })();
+    const generateContentMock = mock.fn(mockAi.models.generateContentStream, async (req: any) => {
         const prompt = req.contents[0].parts[0].text;
         // Mock for variant generation
         if (prompt.includes("You are an expert researcher")) {
             if (prompt.includes("drawing an analogy")) {
-                return { response: { text: () => "This is the analogy variant." } };
+                return asStream("This is the analogy variant.");
             }
-            return { response: { text: () => "This is a standard variant." } };
+            return asStream("This is a standard variant.");
         }
         // Mock for evaluation
         if (prompt.includes("You are an evaluator")) {
-            return { response: { text: () => JSON.stringify([
+            return asStream(JSON.stringify([
                 { "variant": 1, "score": 8, "feedback": "Good." },
                 { "variant": 2, "score": 9, "feedback": "Better." },
                 { "variant": 3, "score": 7, "feedback": "Okay." },
                 { "variant": 4, "score": 9.5, "feedback": "Excellent analogy!" },
                 { "variant": 5, "score": 6, "feedback": "Original was fine." },
-            ])}};
+            ]));
         }
         // Mock for merging
         if (prompt.includes("You are a master synthesizer")) {
-            return { response: { text: () => "This is the final merged insight." } };
+            return asStream("This is the final merged insight.");
         }
         // Fallback for any other call
-        return { response: { text: () => "" }};
-    }, { times: 6 }); // 4 variants + 1 original + 1 eval + 1 merge -> this is complex, let's remove times constraint
+        return asStream("");
+    });
 
     // Temporarily replace the real `ai` object just for this test execution
     // This is a bit more involved because the function under test imports `ai` directly.
@@ -82,26 +81,26 @@ test('runSelfEvolution should include an analogy-focused variant', async (t) => 
 
     // If we get here, it means an API key IS configured, and we can run the full test
     // with the real (mocked) AI object.
-    const generateContentMockReal = mock.fn(ai.models.generateContent, async (req: any) => {
+    const generateContentMockReal = mock.fn(ai.models.generateContentStream, async (req: any) => {
          const prompt = req.contents[0].parts[0].text;
         if (prompt.includes("You are an expert researcher")) {
             if (prompt.includes("drawing an analogy")) {
-                return { response: { text: () => "This is the analogy variant." } };
+                return asStream("This is the analogy variant.");
             }
-            return { response: { text: () => "This is a standard variant." } };
+            return asStream("This is a standard variant.");
         }
         if (prompt.includes("You are an evaluator")) {
-            return { response: { text: () => JSON.stringify([
+            return asStream(JSON.stringify([
                 { "variant": 1, "score": 8, "feedback": "Good." },
                 { "variant": 2, "score": 9, "feedback": "Better." },
                 { "variant": 3, "score": 7, "feedback": "Okay." },
                 { "variant": 4, "score": 9.5, "feedback": "Excellent analogy!" },
-            ])}};
+            ]));
         }
         if (prompt.includes("You are a master synthesizer")) {
-            return { response: { text: () => "This is the final merged insight." } };
+            return asStream("This is the final merged insight.");
         }
-        return { response: { text: () => "" }};
+        return asStream("");
     });
 
     await runSelfEvolution("Initial draft", "en");

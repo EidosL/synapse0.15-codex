@@ -1,9 +1,12 @@
 import React, { useEffect, useRef } from 'react';
+
 import { useLogStore } from '../lib/logStore';
 
-export const ThinkingStatus: React.FC<{ messages: string[] }> = ({ messages }) => {
+
+export const ThinkingStatus: React.FC<{ messages: string[]; onClose?: () => void }> = ({ messages, onClose }) => {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const exportThinkingSteps = useLogStore(state => state.exportThinkingSteps);
+
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
