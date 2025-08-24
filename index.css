@@ -803,14 +803,9 @@ textarea {
     margin: 0;
 }
 
-.thinking-status-header .close-button {
+.thinking-status-header button {
     margin-left: auto;
-    background: none;
-    border: none;
-    color: var(--primary-text-color);
-    cursor: pointer;
-    font-size: 1.25rem;
-    line-height: 1;
+
 }
 
 .thinking-status-log {

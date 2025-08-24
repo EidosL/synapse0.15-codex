@@ -21,6 +21,7 @@ type LogStoreState = {
   addThinkingStep: (step: string) => void;
   addDevLog: (log: Omit<DevLog, 'timestamp'>) => void;
   setDevWindow: (win: Window | null) => void;
+  exportThinkingSteps: () => void;
 };
 
 export const useLogStore = create<LogStoreState>((set, get) => ({
@@ -64,5 +65,17 @@ export const useLogStore = create<LogStoreState>((set, get) => ({
         // When a new window is attached, send it all existing logs for the current run
         win.postMessage({ type: 'history', logs: get().devLogs }, '*');
     }
+  },
+
+  exportThinkingSteps: () => {
+    const { thinkingSteps } = get();
+    const content = thinkingSteps.join('\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'thinking-log.txt';
+    link.click();
+    URL.revokeObjectURL(url);
   },
 }));
