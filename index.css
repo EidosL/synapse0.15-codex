@@ -834,3 +834,31 @@ textarea {
     width: 16px;
     height: 16px;
 }
+
+.note-editor-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end; /* Align buttons to the right */
+}
+
+.note-editor-actions .button[type="button"] {
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    color: var(--primary-text-color);
+    background-image: none; /* Override the default gradient */
+}
+
+.note-editor-actions .button[type="button"]:hover:not(:disabled) {
+    background-color: rgba(255,255,255,0.1);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 10px rgba(88, 166, 255, 0.2);
+}
+
+.note-editor-actions .button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}

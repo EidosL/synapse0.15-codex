@@ -34,7 +34,7 @@ type AppState = {
     setIsEditing: (isEditing: boolean) => void;
     setViewingNote: (note: Note | null) => void;
     setSearchDepth: (depth: SearchDepth) => void;
-    handleSaveNote: (title: string, content: string) => Promise<void>;
+    handleSaveNote: (title: string, content: string) => Promise<Note>;
     handleDeleteNote: (noteId: string) => void;
     handleBulkUpload: (files: FileList) => Promise<void>;
     handleFindInsightsForNote: (noteId: string) => Promise<void>;
@@ -100,6 +100,7 @@ export const useStore = create<AppState>()(
                 set(state => ({ notes: [...state.notes, newNote], isEditing: false }));
                 get().processNotes();
                 await get().handleFindInsightsForNote(newNote.id);
+                return newNote;
             },
 
             handleDeleteNote: (noteId) => {

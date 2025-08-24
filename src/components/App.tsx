@@ -86,7 +86,7 @@ export const App: React.FC = () => {
                 {activeTab === 'inbox' && <Inbox />}
             </main>
 
-            {isEditing && <NoteEditor onSave={handleSaveNote} onClose={() => setIsEditing(false)} />}
+            {isEditing && <NoteEditor onClose={() => setIsEditing(false)} />}
             {viewingNote && <NoteViewer note={viewingNote} onClose={() => setViewingNote(null)} />}
             {loadingState.active && <ThinkingStatus messages={loadingState.messages} />}
 
