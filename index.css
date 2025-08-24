@@ -803,6 +803,16 @@ textarea {
     margin: 0;
 }
 
+.thinking-status-header .close-button {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--primary-text-color);
+    cursor: pointer;
+    font-size: 1.25rem;
+    line-height: 1;
+}
+
 .thinking-status-log {
     list-style-type: none;
     padding-left: 0;
@@ -833,6 +843,21 @@ textarea {
 .thinking-status-log .icon .spinner {
     width: 16px;
     height: 16px;
+}
+
+.thinking-indicator {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background-color: rgba(30, 30, 30, 0.8);
+    border: 1px solid var(--border-color);
+    border-radius: 9999px;
+    padding: 0.5rem 1rem;
+    color: var(--primary-text-color);
+    cursor: pointer;
+    z-index: 1500;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    font-size: 0.9rem;
 }
 
 .note-editor-actions {

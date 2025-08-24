@@ -4,7 +4,7 @@ import { useLogStore } from '../lib/logStore';
 
 import { NoteEditor } from './NoteEditor';
 import { NoteViewer } from './NoteViewer';
-import { ThinkingStatus } from './ThinkingStatus';
+import { ThinkingIndicator } from './ThinkingIndicator';
 import { useTranslation } from '../context/LanguageProvider';
 import { Vault } from './Vault';
 import { Inbox } from './Inbox';
@@ -18,7 +18,6 @@ export const App: React.FC = () => {
         setIsEditing,
         viewingNote,
         setViewingNote,
-        loadingState,
         newInsightCount,
         handleSaveNote,
         handleBulkUpload,
@@ -88,7 +87,7 @@ export const App: React.FC = () => {
 
             {isEditing && <NoteEditor onClose={() => setIsEditing(false)} />}
             {viewingNote && <NoteViewer note={viewingNote} onClose={() => setViewingNote(null)} />}
-            {loadingState.active && <ThinkingStatus messages={loadingState.messages} />}
+            <ThinkingIndicator />
 
             {!ai && <div style={{position: 'fixed', bottom: 0, left:0, right: 0, background: 'var(--danger-color)', padding: '1rem', textAlign: 'center', color: 'white', zIndex: 2000}}>
                 {t('apiKeyWarning')}
