@@ -22,10 +22,14 @@ export async function buildMindMapFromTranscript(transcript: string): Promise<Mi
 Return JSON with nodes (entity|concept|claim), edges (s,t,rel), and 1–3 short summaries.
 Be faithful; no hallucinations.`;
 
-  const res = await ai.models.generateContent({
+  const stream = await ai.models.generateContentStream({
     model: MODEL_NAME,
     contents: `${prompt}\n---\n${transcript.slice(0, 6000)}\n---`,
     config: { responseMimeType:'application/json', responseSchema: MAP_SCHEMA, temperature: 0.2 }
   });
-  return safeParseGeminiJson<MindMap>(res.text);
+  let jsonText = '';
+  for await (const chunk of stream) {
+    jsonText += chunk.text ?? '';
+  }
+  return safeParseGeminiJson<MindMap>(jsonText);
 }

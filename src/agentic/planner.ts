@@ -44,12 +44,16 @@ MIND_HINTS:
 TRANSCRIPT:
 ${transcript.slice(0, 3000)}`;
 
-  const res = await ai.models.generateContent({
+  const stream = await ai.models.generateContentStream({
     model: MODEL_NAME,
     contents: [{ role: 'user', parts: [{ text: contents }] }],
     // @ts-ignore
     config: { responseMimeType:'application/json', responseSchema: PLAN_SCHEMA, temperature }
   });
-  const plan = safeParseGeminiJson<PlanJSON>(res.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
+  let jsonText = '';
+  for await (const chunk of stream) {
+    jsonText += chunk.text ?? '';
+  }
+  const plan = safeParseGeminiJson<PlanJSON>(jsonText);
   return plan;
 }

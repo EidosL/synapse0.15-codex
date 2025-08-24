@@ -1,5 +1,7 @@
-import { ai, MODEL_NAME, CHINESE_OUTPUT_INSTRUCTION, safeParseGeminiJson } from './ai';
+import { ai, MODEL_NAME, safeParseGeminiJson } from './ai';
 import type { Language } from '../context/LanguageProvider';
+
+const CHINESE_OUTPUT_INSTRUCTION = '请用中文输出。';
 
 export const runSelfEvolution = async (finalDraft: string, language: Language): Promise<string> => {
     if (!ai) return finalDraft;
@@ -23,12 +25,16 @@ ${finalDraft}
 ${language === 'zh' ? CHINESE_OUTPUT_INSTRUCTION : ''}
 Return ONLY the refined draft text.`;
         try {
-            const result = await ai.models.generateContent({
+            const stream = await ai.models.generateContentStream({
                 model: MODEL_NAME,
                 contents: [{ role: 'user', parts: [{ text: variantPrompt }] }],
                 generationConfig: { temperature: 0.7 }
             });
-            variants.push(result.response.text().trim());
+            let text = '';
+            for await (const chunk of stream) {
+                text += chunk.text ?? '';
+            }
+            variants.push(text.trim());
         } catch (e) { console.error(`Self-evolution (variant gen) failed for focus ${focus}:`, e); }
     }
     variants.push(finalDraft); // Add the original draft as a variant
@@ -44,12 +50,16 @@ ${variants.map((v, i) => `Insight Variant #${i + 1}:\n"""${v}"""`).join("\n\n")}
 Respond with ONLY a valid JSON list of objects, like this: [{"variant": 1, "score": 8, "feedback": "..."}].`;
 
     try {
-        const result = await ai.models.generateContent({
+        const stream = await ai.models.generateContentStream({
             model: MODEL_NAME,
             contents: [{ role: 'user', parts: [{ text: evalPrompt }] }],
             generationConfig: { responseMimeType: "application/json" }
         });
-        evaluations = safeParseGeminiJson<any[]>(result.response.text()) || [];
+        let evalText = '';
+        for await (const chunk of stream) {
+            evalText += chunk.text ?? '';
+        }
+        evaluations = safeParseGeminiJson<any[]>(evalText) || [];
     } catch (e) { console.error("Self-evolution (evaluation) failed:", e); }
 
     // === 3. Merging ===
@@ -87,12 +97,16 @@ ${language === 'zh' ? CHINESE_OUTPUT_INSTRUCTION : ''}
 Return ONLY the merged insight text.`;
 
     try {
-        const result = await ai.models.generateContent({
+        const stream = await ai.models.generateContentStream({
             model: MODEL_NAME,
             contents: [{ role: 'user', parts: [{ text: mergePrompt }] }],
             generationConfig: { temperature: 0.4 }
         });
-        return result.response.text().trim();
+        let mergeText = '';
+        for await (const chunk of stream) {
+            mergeText += chunk.text ?? '';
+        }
+        return mergeText.trim();
     } catch (e) {
         console.error("Self-evolution (merging) failed:", e);
         return topVariants[0]; // Fallback to the best variant if merge fails
