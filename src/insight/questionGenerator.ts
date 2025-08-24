@@ -1,9 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import type { Language } from '../context/LanguageProvider';
 
-// This should only be used for free-text generation, not for JSON mode.
-const CHINESE_OUTPUT_INSTRUCTION = "\n\nCRITICAL: You MUST respond exclusively in Simplified Chinese.";
-
 // --- Divergent Question Generation ---
 
 /**
@@ -28,7 +25,7 @@ CURRENT DRAFT:
 """
 ${draft.slice(0, 15000)}
 """
-${language === 'zh' ? CHINESE_OUTPUT_INSTRUCTION : ''}
+
 Return ONLY the single question as a raw string, not in a JSON object.`;
 
     try {

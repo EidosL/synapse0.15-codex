@@ -37,9 +37,6 @@ if (process.env.API_KEY) {
 
 export const ai = aiInstance;
 
-// This should only be used for free-text generation, not for JSON mode.
-export const CHINESE_OUTPUT_INSTRUCTION = "\n\nCRITICAL: You MUST respond exclusively in Simplified Chinese.";
-
 export const safeParseGeminiJson = <T,>(text: string): T | null => {
     const jsonText = text.trim();
     if (!jsonText || jsonText.toLowerCase() === 'null') return null;
@@ -239,7 +236,7 @@ Your task:
 4.  Keep the draft concise (2-4 sentences).
 
 This is a preliminary draft that will be iteratively improved with more information.
-${language === 'zh' ? CHINESE_OUTPUT_INSTRUCTION : ''}
+
 Return ONLY the text of the draft.`;
 
     try {
@@ -515,7 +512,7 @@ Instructions:
 4.  If the new information provides a source, you can add a citation like [Source: Note Title].
 5.  Maintain the draft's original structure and coherence. The goal is to refine and expand, not to rewrite completely.
 6.  If the new information is not relevant, return the original draft unchanged.
-${language === 'zh' ? CHINESE_OUTPUT_INSTRUCTION : ''}
+
 Return ONLY the updated draft text.`;
 
     try {
