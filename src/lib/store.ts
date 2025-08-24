@@ -10,6 +10,7 @@ import {
 import type { Note, Insight, SearchDepth } from './types';
 import { getVectorStore } from './vectorStore';
 import i18n from '../context/i18n';
+import { useLogStore } from './logStore';
 
 type LoadingState = {
     active: boolean;
@@ -76,7 +77,9 @@ export const useStore = create<AppState>()(
                 const language = i18n.language as 'en' | 'zh';
                 const vectorStore = getVectorStore();
 
-                set({ loadingState: { active: true, messages: [t('savingAndChunking')] } });
+                const savingMsg = t('savingAndChunking');
+                useLogStore.getState().addThinkingStep(savingMsg);
+                set({ loadingState: { active: true, messages: [] } });
 
                 const parentChunks = await chunkNoteContent(content, title, language);
                 const childTexts = parentChunks.flatMap(pc => pc.children.map(c => c.text));
@@ -90,7 +93,9 @@ export const useStore = create<AppState>()(
                     parentChunks,
                 };
 
-                set({ loadingState: { active: true, messages: [t('embeddingChunks')] } });
+                const embeddingMsg = t('embeddingChunks');
+                useLogStore.getState().addThinkingStep(embeddingMsg);
+                set({ loadingState: { active: true, messages: [] } });
                 const embeddings = await embedChunks(childTexts);
                 addNoteVectorsToStore(newNote, embeddings, vectorStore);
 
@@ -121,15 +126,21 @@ export const useStore = create<AppState>()(
                 const language = i18n.language as 'en' | 'zh';
                 const vectorStore = getVectorStore();
 
-                set({ loadingState: { active: true, messages: [t('readingFiles', { count: files.length })] } });
+                const readingMsg = t('readingFiles', { count: files.length });
+                useLogStore.getState().addThinkingStep(readingMsg);
+                set({ loadingState: { active: true, messages: [] } });
 
                 const notesToProcess = await Promise.all(Array.from(files).map(file => readFileContent(file)));
 
-                set(state => ({ ...state, loadingState: { ...state.loadingState, messages: [t('chunkingNotes', { count: notesToProcess.length })] } }));
+                const chunkingNotesMsg = t('chunkingNotes', { count: notesToProcess.length });
+                useLogStore.getState().addThinkingStep(chunkingNotesMsg);
+                set(state => ({ ...state, loadingState: { ...state.loadingState, messages: [] } }));
 
                 const newNotes: Note[] = [];
                 for (const [index, noteData] of notesToProcess.entries()) {
-                    set(state => ({ ...state, loadingState: { ...state.loadingState, messages: [t('chunkingProgress', { current: index + 1, total: notesToProcess.length, title: noteData.title })] } }));
+                    const progressMsg = t('chunkingProgress', { current: index + 1, total: notesToProcess.length, title: noteData.title });
+                    useLogStore.getState().addThinkingStep(progressMsg);
+                    set(state => ({ ...state, loadingState: { ...state.loadingState, messages: [] } }));
                     const parentChunks = await chunkNoteContent(noteData.content, noteData.title, language);
                     const childTexts = parentChunks.flatMap(pc => pc.children.map(c => c.text));
 
@@ -143,7 +154,9 @@ export const useStore = create<AppState>()(
                     });
                 }
 
-                set({ loadingState: { active: true, messages: [t('generatingEmbeddings')] } });
+                const embeddingMsg = t('generatingEmbeddings');
+                useLogStore.getState().addThinkingStep(embeddingMsg);
+                set({ loadingState: { active: true, messages: [] } });
 
                 const allChildTexts = newNotes.flatMap(note => note.chunks || []);
                 const allEmbeddings = await embedChunks(allChildTexts);
@@ -168,7 +181,19 @@ export const useStore = create<AppState>()(
                         const { t } = i18n;
                         const language = i18n.language as 'en' | 'zh';
                         const vectorStore = getVectorStore();
-                        const links = await findSynapticLink(note, existingNotes, (loadingState) => set({loadingState}), vectorStore, language, t, searchDepth);
+                        const links = await findSynapticLink(
+                            note,
+                            existingNotes,
+                            (loadingState) => {
+                                const msg = loadingState.messages[loadingState.messages.length - 1];
+                                if (msg) useLogStore.getState().addThinkingStep(msg);
+                                set({ loadingState: { ...loadingState, messages: [] } });
+                            },
+                            vectorStore,
+                            language,
+                            t,
+                            searchDepth
+                        );
                         if (links.length > 0) {
                             const newInsights: Insight[] = links.map((link, i) => ({
                                 ...link,
@@ -198,11 +223,15 @@ export const useStore = create<AppState>()(
 
                 const notesNeedingChunking = notes.filter(n => !n.parentChunks || n.parentChunks.length === 0);
                 if (notesNeedingChunking.length > 0) {
-                    set({ loadingState: { active: true, messages: [t('loadingChunking', { count: notesNeedingChunking.length })] } });
+                    const chunkingMsg = t('loadingChunking', { count: notesNeedingChunking.length });
+                    useLogStore.getState().addThinkingStep(chunkingMsg);
+                    set({ loadingState: { active: true, messages: [] } });
                     const updatedNotes = [...notes];
 
                     for (const [index, note] of notesNeedingChunking.entries()) {
-                        set(state => ({...state, loadingState: {...state.loadingState, messages: [t('chunkingProgress', {current: index + 1, total: notesNeedingChunking.length, title: note.title})]} }));
+                        const progressMsg = t('chunkingProgress', {current: index + 1, total: notesNeedingChunking.length, title: note.title});
+                        useLogStore.getState().addThinkingStep(progressMsg);
+                        set(state => ({...state, loadingState: {...state.loadingState, messages: []} }));
                         const parentChunks = await chunkNoteContent(note.content, note.title, language);
                         const noteIndex = updatedNotes.findIndex(n => n.id === note.id);
                         if (noteIndex !== -1) {
@@ -216,7 +245,9 @@ export const useStore = create<AppState>()(
 
                 const notesToIndex = notes.filter(n => n.parentChunks && n.parentChunks.length > 0 && !vectorStore.isNoteIndexed(n.id));
                 if (notesToIndex.length > 0) {
-                    set({ loadingState: { active: true, messages: [`Indexing ${notesToIndex.length} note(s)...`] } });
+                    const indexingMsg = t('loadingIndexing', { count: notesToIndex.length });
+                    useLogStore.getState().addThinkingStep(indexingMsg);
+                    set({ loadingState: { active: true, messages: [] } });
 
                     const allChildTexts = notesToIndex.flatMap(note => note.chunks || []);
                     const allEmbeddings = await embedChunks(allChildTexts);

@@ -23,9 +23,10 @@ export const App: React.FC = () => {
         handleSaveNote,
         handleBulkUpload,
     } = useStore();
-    
+
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { t, toggleLanguage } = useTranslation();
+    const thinkingSteps = useLogStore(state => state.thinkingSteps);
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -88,7 +89,7 @@ export const App: React.FC = () => {
 
             {isEditing && <NoteEditor onClose={() => setIsEditing(false)} />}
             {viewingNote && <NoteViewer note={viewingNote} onClose={() => setViewingNote(null)} />}
-            {loadingState.active && <ThinkingStatus messages={loadingState.messages} />}
+            {loadingState.active && <ThinkingStatus messages={thinkingSteps} />}
 
             {!ai && <div style={{position: 'fixed', bottom: 0, left:0, right: 0, background: 'var(--danger-color)', padding: '1rem', textAlign: 'center', color: 'white', zIndex: 2000}}>
                 {t('apiKeyWarning')}
