@@ -66,6 +66,8 @@ export const translations = {
     deleteConfirmation: 'Are you sure you want to delete this note and all its associated insights? This action cannot be undone.',
     apiKeyWarning: 'Warning: API_KEY is not configured. AI connection features are disabled.',
     languageToggle: '中文',
+    thinkingInProgress: 'Thinking...',
+    synapseThinking: 'Synapse is Thinking...',
     // Thinking Status
     thinkingBrainstorming: 'Brainstorming avenues of inquiry...',
     thinkingSearching: 'Searching knowledge base for relevant concepts...',
@@ -145,6 +147,8 @@ export const translations = {
     deleteConfirmation: '您确定要删除此笔记及其所有相关见解吗？此操作无法撤销。',
     apiKeyWarning: '警告：未配置 API_KEY。AI 连接功能已禁用。',
     languageToggle: 'EN',
+    thinkingInProgress: '正在思考中...',
+    synapseThinking: 'Synapse 正在思考...',
      // Thinking Status
     thinkingBrainstorming: '正在构思探究途径...',
     thinkingSearching: '正在知识库中搜索相关概念...',
