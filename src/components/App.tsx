@@ -4,7 +4,7 @@ import { useLogStore } from '../lib/logStore';
 
 import { NoteEditor } from './NoteEditor';
 import { NoteViewer } from './NoteViewer';
-import { ThinkingStatus } from './ThinkingStatus';
+import { ThinkingIndicator } from './ThinkingIndicator';
 import { useTranslation } from '../context/LanguageProvider';
 import { Vault } from './Vault';
 import { Inbox } from './Inbox';
@@ -18,7 +18,6 @@ export const App: React.FC = () => {
         setIsEditing,
         viewingNote,
         setViewingNote,
-        loadingState,
         newInsightCount,
         handleSaveNote,
         handleBulkUpload,

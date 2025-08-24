@@ -45,12 +45,22 @@ export async function runAgenticInsight(
     if (action === 'web_search') {
       const hits = await tools.web.search(message, 5);
       const bullets = hits.map(h => `• ${h.title}: ${h.snippet}`).join('\n');
-      // Summarize to keep context lean
-      const res = await ai?.models.generateContent({
-        model: MODEL_NAME,
-        contents: `Summarize key facts useful for: "${expected}". Use only these bullets, no new claims.\n${bullets}`
-      });
-      result.content = `WEB_SUMMARY:\n${res?.text ?? bullets}`;
+      // Summarize to keep context lean using streaming
+      let summary = '';
+      if (ai) {
+        const stream = await ai.models.generateContentStream({
+          model: MODEL_NAME,
+          contents: `Summarize key facts useful for: "${expected}". Use only these bullets, no new claims.\n${bullets}`
+        });
+        for await (const chunk of stream) {
+          const text = chunk.text ?? '';
+          summary += text;
+          log(text);
+        }
+      } else {
+        summary = bullets;
+      }
+      result.content = `WEB_SUMMARY:\n${summary || bullets}`;
       result.citations = hits.map(h => ({ url: h.url }));
       toolCalls++;
     }
