@@ -50,6 +50,7 @@ export const translations = {
     // Modals
     newNoteModalTitle: 'New Note',
     saveNoteButton: 'Save Note',
+    researchButton: 'Research',
     noteTitlePlaceholder: 'Note Title',
     noteContentPlaceholder: 'Write your thoughts here... (Markdown supported)',
     comparingNotesTitle: 'Comparing Notes',
@@ -128,6 +129,7 @@ export const translations = {
     // Modals
     newNoteModalTitle: '新笔记',
     saveNoteButton: '保存笔记',
+    researchButton: '研究',
     noteTitlePlaceholder: '笔记标题',
     noteContentPlaceholder: '在这里写下你的想法... (支持 Markdown)',
     comparingNotesTitle: '比较笔记',
