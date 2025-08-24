@@ -803,6 +803,10 @@ textarea {
     margin: 0;
 }
 
+.thinking-status-header button {
+    margin-left: auto;
+}
+
 .thinking-status-log {
     list-style-type: none;
     padding-left: 0;

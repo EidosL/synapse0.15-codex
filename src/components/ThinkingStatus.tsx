@@ -1,7 +1,9 @@
 import React, { useEffect, useRef } from 'react';
+import { useLogStore } from '../lib/logStore';
 
 export const ThinkingStatus: React.FC<{ messages: string[] }> = ({ messages }) => {
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const exportThinkingSteps = useLogStore(state => state.exportThinkingSteps);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -18,6 +20,7 @@ export const ThinkingStatus: React.FC<{ messages: string[] }> = ({ messages }) =
             <div className="thinking-status-content">
                 <div className="thinking-status-header">
                     <h3>🧠 Synapse is Thinking...</h3>
+                    <button onClick={exportThinkingSteps}>Download log</button>
                 </div>
                 <ul className="thinking-status-log">
                     {completedMessages.map((msg, index) => (
