@@ -1,11 +1,12 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { findSynapticLink } from './ai';
 import {
-    semanticChunker,
-    generateBatchEmbeddings,
-    findSynapticLink,
-} from './ai';
+    readFileContent,
+    chunkNoteContent,
+    embedChunks,
+    addNoteVectorsToStore
+} from './noteService';
 import type { Note, Insight, SearchDepth } from './types';
 import { getVectorStore } from './vectorStore';
 import i18n from '../context/i18n';
@@ -28,6 +29,7 @@ type AppState = {
     language: 'en' | 'zh';
     novelty_scores: number[];
     insight_notes: string[];
+    _hasHydrated: boolean;
 
     // Actions
     setActiveTab: (tab: 'vault' | 'inbox') => void;
@@ -41,6 +43,7 @@ type AppState = {
     handleUpdateInsight: (id: string, status: 'kept' | 'dismissed') => void;
     processNotes: () => Promise<void>;
     setLanguage: (language: 'en' | 'zh') => void;
+    setHasHydrated: (hydrated: boolean) => void;
 };
 
 export const useStore = create<AppState>()(
@@ -58,6 +61,7 @@ export const useStore = create<AppState>()(
             language: 'en',
             novelty_scores: [],
             insight_notes: [],
+            _hasHydrated: false,
 
             // Actions
             setActiveTab: (tab) => set({ activeTab: tab }),
@@ -65,21 +69,20 @@ export const useStore = create<AppState>()(
             setViewingNote: (note) => set({ viewingNote: note }),
             setSearchDepth: (depth) => set({ searchDepth: depth }),
             setLanguage: (language) => set({ language }),
+            setHasHydrated: (hydrated) => set({ _hasHydrated: hydrated }),
 
             handleSaveNote: async (title, content) => {
                 const { t } = i18n;
                 const language = i18n.language as 'en' | 'zh';
                 const vectorStore = getVectorStore();
-                const noteId = `note-${Date.now()}`;
 
                 set({ loadingState: { active: true, messages: [t('savingAndChunking')] } });
 
-                const parentChunks = await semanticChunker(content, title, language);
+                const parentChunks = await chunkNoteContent(content, title, language);
                 const childTexts = parentChunks.flatMap(pc => pc.children.map(c => c.text));
-                const mapping = parentChunks.flatMap((pc, pi) => pc.children.map((_, ci) => ({ parentIdx: pi, childIdx: ci })));
 
                 const newNote: Note = {
-                    id: noteId,
+                    id: `note-${Date.now()}`,
                     title,
                     content,
                     createdAt: new Date().toISOString(),
@@ -88,17 +91,14 @@ export const useStore = create<AppState>()(
                 };
 
                 set({ loadingState: { active: true, messages: [t('embeddingChunks')] } });
-
-                const embeddings = await generateBatchEmbeddings(childTexts);
-                embeddings.forEach((embedding, index) => {
-                    if (embedding.length > 0) {
-                        const { parentIdx, childIdx } = mapping[index];
-                        vectorStore.addVector(`${newNote.id}:${parentIdx}:${childIdx}`, embedding);
-                    }
-                });
+                const embeddings = await embedChunks(childTexts);
+                addNoteVectorsToStore(newNote, embeddings, vectorStore);
 
                 set(state => ({ notes: [...state.notes, newNote], isEditing: false }));
-                get().processNotes();
+
+                // Don't call processNotes here, as the new note is already processed.
+                // await get().processNotes();
+
                 await get().handleFindInsightsForNote(newNote.id);
             },
 
@@ -122,37 +122,14 @@ export const useStore = create<AppState>()(
 
                 set({ loadingState: { active: true, messages: [t('readingFiles', { count: files.length })] } });
 
-                const notesToProcess = await Promise.all(Array.from(files).map(async (file) => {
-                    let content = '';
-                    if (file.type === 'application/pdf') {
-                        try {
-                            const arrayBuffer = await file.arrayBuffer();
-                            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-                            const pageTexts = await Promise.all(
-                                Array.from({ length: pdf.numPages }, (_, i) => i + 1).map(async pageNum => {
-                                    const page = await pdf.getPage(pageNum);
-                                    const textContent = await page.getTextContent();
-                                    return textContent.items.map((item: any) => item.str).join(' ');
-                                })
-                            );
-                            content = pageTexts.join('\n\n');
-                        } catch (error) {
-                            console.error(`Failed to process PDF ${file.name}:`, error);
-                            content = `Error reading PDF: ${file.name}. The file might be corrupted or protected.`;
-                        }
-                    } else {
-                        content = await file.text();
-                    }
-                    const title = file.name.replace(/\.(md|txt|pdf)$/i, '');
-                    return { title, content };
-                }));
+                const notesToProcess = await Promise.all(Array.from(files).map(file => readFileContent(file)));
 
                 set(state => ({ ...state, loadingState: { ...state.loadingState, messages: [t('chunkingNotes', { count: notesToProcess.length })] } }));
 
                 const newNotes: Note[] = [];
                 for (const [index, noteData] of notesToProcess.entries()) {
-                     set(state => ({ ...state, loadingState: { ...state.loadingState, messages: [t('chunkingProgress', { current: index + 1, total: notesToProcess.length, title: noteData.title })] } }));
-                    const parentChunks = await semanticChunker(noteData.content, noteData.title, language);
+                    set(state => ({ ...state, loadingState: { ...state.loadingState, messages: [t('chunkingProgress', { current: index + 1, total: notesToProcess.length, title: noteData.title })] } }));
+                    const parentChunks = await chunkNoteContent(noteData.content, noteData.title, language);
                     const childTexts = parentChunks.flatMap(pc => pc.children.map(c => c.text));
 
                     newNotes.push({
@@ -166,16 +143,16 @@ export const useStore = create<AppState>()(
                 }
 
                 set({ loadingState: { active: true, messages: [t('generatingEmbeddings')] } });
-                const childTextMap = newNotes.flatMap(n => n.parentChunks!.flatMap((pc, pi) => pc.children.map((c, ci) => ({ noteId: n.id, parentIdx: pi, childIdx: ci, text: c.text }))));
-                const allChunks = childTextMap.map(c => c.text);
 
-                const embeddings = await generateBatchEmbeddings(allChunks);
-                embeddings.forEach((embedding, index) => {
-                    if (embedding && embedding.length > 0) {
-                        const { noteId, parentIdx, childIdx } = childTextMap[index];
-                        vectorStore.addVector(`${noteId}:${parentIdx}:${childIdx}`, embedding);
-                    }
-                });
+                const allChildTexts = newNotes.flatMap(note => note.chunks || []);
+                const allEmbeddings = await embedChunks(allChildTexts);
+
+                let embeddingIndex = 0;
+                for (const note of newNotes) {
+                    const noteEmbeddings = allEmbeddings.slice(embeddingIndex, embeddingIndex + (note.chunks?.length || 0));
+                    addNoteVectorsToStore(note, noteEmbeddings, vectorStore);
+                    embeddingIndex += note.chunks?.length || 0;
+                }
 
                 set(state => ({ notes: [...state.notes, ...newNotes], loadingState: { active: false, messages: [] } }));
             },
@@ -217,14 +194,15 @@ export const useStore = create<AppState>()(
                 const { t } = i18n;
                 const language = i18n.language as 'en' | 'zh';
                 const vectorStore = getVectorStore();
-                 const notesNeedingChunking = notes.filter(n => !n.parentChunks || n.parentChunks.length === 0);
+
+                const notesNeedingChunking = notes.filter(n => !n.parentChunks || n.parentChunks.length === 0);
                 if (notesNeedingChunking.length > 0) {
                     set({ loadingState: { active: true, messages: [t('loadingChunking', { count: notesNeedingChunking.length })] } });
                     const updatedNotes = [...notes];
 
                     for (const [index, note] of notesNeedingChunking.entries()) {
                         set(state => ({...state, loadingState: {...state.loadingState, messages: [t('chunkingProgress', {current: index + 1, total: notesNeedingChunking.length, title: note.title})]} }));
-                        const parentChunks = await semanticChunker(note.content, note.title, language);
+                        const parentChunks = await chunkNoteContent(note.content, note.title, language);
                         const noteIndex = updatedNotes.findIndex(n => n.id === note.id);
                         if (noteIndex !== -1) {
                             updatedNotes[noteIndex].parentChunks = parentChunks;
@@ -239,19 +217,16 @@ export const useStore = create<AppState>()(
                 if (notesToIndex.length > 0) {
                     set({ loadingState: { active: true, messages: [`Indexing ${notesToIndex.length} note(s)...`] } });
 
+                    const allChildTexts = notesToIndex.flatMap(note => note.chunks || []);
+                    const allEmbeddings = await embedChunks(allChildTexts);
+
+                    let embeddingIndex = 0;
                     for (const note of notesToIndex) {
-                        if (note.parentChunks) {
-                            const childTexts = note.parentChunks.flatMap(pc => pc.children.map(c => c.text));
-                            const mapping = note.parentChunks.flatMap((pc, pi) => pc.children.map((_, ci) => ({ parentIdx: pi, childIdx: ci })));
-                            const embeddings = await generateBatchEmbeddings(childTexts);
-                            embeddings.forEach((embedding, index) => {
-                                if (embedding && embedding.length > 0) {
-                                    const { parentIdx, childIdx } = mapping[index];
-                                    vectorStore.addVector(`${note.id}:${parentIdx}:${childIdx}`, embedding);
-                                }
-                            });
-                        }
+                        const noteEmbeddings = allEmbeddings.slice(embeddingIndex, embeddingIndex + (note.chunks?.length || 0));
+                        addNoteVectorsToStore(note, noteEmbeddings, vectorStore);
+                        embeddingIndex += note.chunks?.length || 0;
                     }
+
                     set({ loadingState: { active: false, messages: [] } });
                 }
             },
@@ -259,6 +234,9 @@ export const useStore = create<AppState>()(
         {
             name: 'synapse-storage', // name of the item in the storage (must be unique)
             storage: createJSONStorage(() => localStorage), // (optional) by default, 'localStorage' is used
+            onRehydrateStorage: () => (state) => {
+                state?.setHasHydrated(true);
+            },
             partialize: (state) => ({
                 notes: state.notes,
                 insights: state.insights,
