@@ -856,6 +856,25 @@ async function postProcessWithAgentic({
   return results;
 }
 
+/**
+ * Orchestrates the end-to-end "find connections" workflow for a new note.
+ *
+ * The pipeline performs several phases:
+ * 1. Calls the backend clustering service to identify candidate notes that share topics
+ *    with the new note.
+ * 2. Runs synthesis and ranking on those candidates to produce preliminary insights.
+ * 3. Optionally applies multi-hop reasoning, an agentic refinement loop and self-evolution
+ *    to deepen or improve the top insight.
+ *
+ * @param newNote        Note the user has just created or is exploring.
+ * @param existingNotes  All other notes in the vault.
+ * @param setLoadingState React state setter used to surface progress messages to the UI.
+ * @param vectorStore    Store for similarity search during multi-hop linking.
+ * @param language       UI language code.
+ * @param t              Translation function for user-facing messages.
+ * @param tier           Subscription tier which gates advanced features.
+ * @returns              Ranked list of insights relating the new note to others.
+ */
 export const findSynapticLink = async (
     newNote: Note, existingNotes: Note[], setLoadingState: Dispatch<SetStateAction<LoadingState>>, vectorStore: VectorStore,
     language: Language = 'en', t: TFunction, tier: Tier = 'pro'
@@ -956,7 +975,8 @@ export const findSynapticLink = async (
         null // No guiding draft, as the iterative process is gone
     );
 
-    let memoryWorkspace = {
+    // Workspace used to track intermediate results and probes throughout the pipeline.
+    let insightWorkspace = {
         bestResults: [] as InsightResult[],
         probes: new Set<string>(clusterSummariesAsQueries), // Store for logging
         retrievedNoteIds: new Set<string>(candidateNoteIds), // Store for logging
@@ -964,7 +984,7 @@ export const findSynapticLink = async (
 
     if (results.length > 0) {
         const uniqueResults = Array.from(new Map(results.map(r => [r.oldNoteId, r])).values());
-        memoryWorkspace.bestResults = uniqueResults.slice(0, 3);
+        insightWorkspace.bestResults = uniqueResults.slice(0, 3);
     } else {
         hooks.onLog('Synthesis engine did not produce any insights from the candidates.');
         setLoadingState({ active: false, messages: [] });
@@ -974,51 +994,51 @@ export const findSynapticLink = async (
     // --- Post-processing (Multi-hop, Agentic Refinement, etc.) ---
     // This part of the pipeline can remain as it enhances the results from synthesis.
 
-    if (budget.enableMultiHop && memoryWorkspace.bestResults.length > 0) {
+    if (budget.enableMultiHop && insightWorkspace.bestResults.length > 0) {
         hooks.onLog?.('Checking for multi-hop constellation insights...');
         const constellationInsight = await findBridgingInsight(
-            memoryWorkspace.bestResults[0], newNote, existingNotes, vectorStore, budget, language
+            insightWorkspace.bestResults[0], newNote, existingNotes, vectorStore, budget, language
         );
         if (constellationInsight) {
-            if ((constellationInsight.confidence ?? 0) > (memoryWorkspace.bestResults[0].confidence ?? 0)) {
-                memoryWorkspace.bestResults.unshift(constellationInsight);
-                const uniqueResults = Array.from(new Map(memoryWorkspace.bestResults.map(r => [r.oldNoteId, r])).values());
-                memoryWorkspace.bestResults = uniqueResults.slice(0, 3);
+            if ((constellationInsight.confidence ?? 0) > (insightWorkspace.bestResults[0].confidence ?? 0)) {
+                insightWorkspace.bestResults.unshift(constellationInsight);
+                const uniqueResults = Array.from(new Map(insightWorkspace.bestResults.map(r => [r.oldNoteId, r])).values());
+                insightWorkspace.bestResults = uniqueResults.slice(0, 3);
                 hooks.onLog?.(`Found a superior constellation insight bridging via note ${constellationInsight.oldNoteId}.`);
             }
         }
     }
 
-    if (tier === 'pro' && memoryWorkspace.bestResults.length > 0) {
-        const topConfidence = memoryWorkspace.bestResults[0]?.confidence ?? 0;
+    if (tier === 'pro' && insightWorkspace.bestResults.length > 0) {
+        const topConfidence = insightWorkspace.bestResults[0]?.confidence ?? 0;
         if (topConfidence < 0.7) { // Simplified condition
             setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingRefining')] }));
             addDevLog({ source: 'system', type: 'info', content: 'Entering agentic refinement loop.' });
             const refined = await runAgenticRefinement({
-                insight: memoryWorkspace.bestResults[0],
+                insight: insightWorkspace.bestResults[0],
                 tier,
                 topic: newNote.title || newNote.content.slice(0, 120),
                 budget,
                 hooks,
             });
             if (refined) {
-                memoryWorkspace.bestResults[0] = refined;
+                insightWorkspace.bestResults[0] = refined;
                 hooks.onLog?.('Insight refined using agentic loop.');
             }
         }
     }
 
-    memoryWorkspace.bestResults.forEach(r => {
+    insightWorkspace.bestResults.forEach(r => {
         if (r.thinkingProcess) {
-            r.thinkingProcess.searchQueries = Array.from(memoryWorkspace.probes);
-            r.thinkingProcess.retrievedCandidateIds = Array.from(memoryWorkspace.retrievedNoteIds);
+            r.thinkingProcess.searchQueries = Array.from(insightWorkspace.probes);
+            r.thinkingProcess.retrievedCandidateIds = Array.from(insightWorkspace.retrievedNoteIds);
         }
     });
 
-    if (tier === 'pro' && budget.enableSelfEvolution && memoryWorkspace.bestResults.length > 0) {
+    if (tier === 'pro' && budget.enableSelfEvolution && insightWorkspace.bestResults.length > 0) {
         hooks.onLog?.('Entering self-evolution stage to refine the final insight...');
         setLoadingState(prev => ({ ...prev, messages: [...prev.messages, t('thinkingRefining')] }));
-        const insightToEvolve = memoryWorkspace.bestResults[0];
+        const insightToEvolve = insightWorkspace.bestResults[0];
         const evolvedInsightCore = await runSelfEvolution(insightToEvolve.insightCore, language);
         if (evolvedInsightCore !== insightToEvolve.insightCore) {
             insightToEvolve.insightCore = evolvedInsightCore;
@@ -1031,7 +1051,7 @@ export const findSynapticLink = async (
         }
     }
 
-    const finalResults = await postProcessWithAgentic({ tier, newNote, results: memoryWorkspace.bestResults });
+    const finalResults = await postProcessWithAgentic({ tier, newNote, results: insightWorkspace.bestResults });
 
     setLoadingState({ active: false, messages: [] });
     return finalResults;
