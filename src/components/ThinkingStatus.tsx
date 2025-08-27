@@ -1,29 +1,71 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
+import type { JobView } from '../lib/api/insights';
 
-import { useLogStore } from '../lib/logStore';
+// The new props for the component
+interface ThinkingStatusProps {
+    job: JobView | null;
+    legacySteps: string[];
+}
 
+export const ThinkingStatus: React.FC<ThinkingStatusProps> = ({ job, legacySteps }) => {
+    // New Python Backend Path
+    if (job) {
+        const { status, progress, partial_results, error } = job;
+        const phase = progress?.phase.replace(/_/g, ' ') ?? 'Initializing...';
+        const pct = progress?.pct ?? 0;
 
-export const ThinkingStatus: React.FC<{ messages: string[]; onClose?: () => void }> = ({ messages, onClose }) => {
-    const messagesEndRef = useRef<HTMLDivElement>(null);
-    const exportThinkingSteps = useLogStore(state => state.exportThinkingSteps);
+        let content;
+        if (status === 'FAILED') {
+            content = (
+                <div className="error-content">
+                    <h4>Job Failed</h4>
+                    <p>{error?.code}: {error?.message}</p>
+                </div>
+            );
+        } else {
+            content = (
+                <>
+                    <div className="progress-bar-container">
+                        <div className="progress-bar" style={{ width: `${pct}%` }}></div>
+                    </div>
+                    <p className="progress-label">{phase} ({pct}%)</p>
+                    {partial_results && partial_results.length > 0 && (
+                        <div className="partial-results">
+                            <h5>Early Insights:</h5>
+                            <ul>
+                                {partial_results.map(insight => (
+                                    <li key={insight.insight_id}>{insight.title}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </>
+            );
+        }
 
+        return (
+            <div className="thinking-status-overlay">
+                <div className="thinking-status-content">
+                    <div className="thinking-status-header">
+                        <h3>🧠 Synapse is Thinking...</h3>
+                        {/* A cancel button could be added here later */}
+                    </div>
+                    {content}
+                </div>
+            </div>
+        );
+    }
 
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    };
-
-    useEffect(scrollToBottom, [messages]);
-    if (messages.length === 0) return null;
-
-    const completedMessages = messages.slice(0, -1);
-    const currentMessage = messages[messages.length - 1];
+    // Legacy TypeScript Path
+    if (legacySteps.length === 0) return null;
+    const completedMessages = legacySteps.slice(0, -1);
+    const currentMessage = legacySteps[legacySteps.length - 1];
 
     return (
         <div className="thinking-status-overlay">
             <div className="thinking-status-content">
                 <div className="thinking-status-header">
-                    <h3>🧠 Synapse is Thinking...</h3>
-                    <button onClick={exportThinkingSteps}>Download log</button>
+                    <h3>🧠 Synapse is Thinking (Legacy)...</h3>
                 </div>
                 <ul className="thinking-status-log">
                     {completedMessages.map((msg, index) => (
@@ -39,7 +81,6 @@ export const ThinkingStatus: React.FC<{ messages: string[]; onClose?: () => void
                         </li>
                     )}
                 </ul>
-                <div ref={messagesEndRef} />
             </div>
         </div>
     );

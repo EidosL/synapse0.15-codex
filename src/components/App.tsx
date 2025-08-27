@@ -21,6 +21,8 @@ export const App: React.FC = () => {
         newInsightCount,
         handleSaveNote,
         handleBulkUpload,
+        activeJob,
+        isFindingLinks, // We can use this OR activeJob to show loading
     } = useStore();
 
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -88,7 +90,7 @@ export const App: React.FC = () => {
 
             {isEditing && <NoteEditor onClose={() => setIsEditing(false)} />}
             {viewingNote && <NoteViewer note={viewingNote} onClose={() => setViewingNote(null)} />}
-            {loadingState.active && <ThinkingStatus messages={thinkingSteps} />}
+            {isFindingLinks && <ThinkingStatus job={activeJob} legacySteps={thinkingSteps} />}
 
             {!ai && <div style={{position: 'fixed', bottom: 0, left:0, right: 0, background: 'var(--danger-color)', padding: '1rem', textAlign: 'center', color: 'white', zIndex: 2000}}>
                 {t('apiKeyWarning')}

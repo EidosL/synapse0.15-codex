@@ -875,7 +875,7 @@ async function postProcessWithAgentic({
  * @param tier           Subscription tier which gates advanced features.
  * @returns              Ranked list of insights relating the new note to others.
  */
-export const findSynapticLink = async (
+export const findSynapticLink_legacy = async (
     newNote: Note, existingNotes: Note[], setLoadingState: Dispatch<SetStateAction<LoadingState>>, vectorStore: VectorStore,
     language: Language = 'en', t: TFunction, tier: Tier = 'pro'
 ): Promise<InsightResult[]> => {
