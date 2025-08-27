@@ -1,17 +1,16 @@
-import { GoogleGenAI } from '@google/genai';
+import { routeLlmCall } from '../lib/ai';
 
 /**
  * Evaluates the novelty of a given research draft using an LLM.
  *
  * @param draft - The research draft to evaluate.
- * @param ai - The GoogleGenAI instance.
  * @returns A promise that resolves to a novelty score between 1 and 10.
  */
 export const evaluateNovelty = async (
     draft: string,
-    ai: GoogleGenAI | null
+    caller: typeof routeLlmCall = routeLlmCall
 ): Promise<number> => {
-    if (!ai || !draft) return 1.0; // Default to low novelty if AI is not available or draft is empty
+    if (!draft) return 1.0; // Default to low novelty if draft is empty
 
     const prompt = `On a scale from 1 (common knowledge) to 10 (highly novel and surprising), rate the novelty of the core insight in the following draft.
 Focus only on the main takeaway or connection being made. Ignore the quality of the writing.
@@ -25,15 +24,11 @@ ${draft.slice(0, 15000)}
 Return ONLY a single number from 1 to 10.`;
 
     try {
-        const result = await ai.models.generateContent({
-            model: 'gemini-1.5-flash',
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: {
-                temperature: 0.2,
-                stopSequences: ['\n'],
-            }
-        });
-        const scoreText = result.response.text().trim();
+        const res = await caller('evaluateNovelty', [
+            { role: 'user', content: prompt }
+        ], { max_tokens: 5, temperature: 0.2 });
+
+        const scoreText = res.choices[0]?.message?.content?.trim() ?? '1';
         const score = parseFloat(scoreText);
 
         if (isNaN(score) || score < 1 || score > 10) {
