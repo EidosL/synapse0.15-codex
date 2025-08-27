@@ -1,3 +1,4 @@
+import OpenAI from 'openai';
 import { GoogleGenAI, Type, Schema } from '@google/genai';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Note, Insight, InsightThinkingProcess, ParentChunk, SearchDepth, Hypothesis, EurekaMarkers, SerendipityInfo } from './types';
@@ -28,14 +29,49 @@ export const MODEL_NAME = 'gemini-2.5-flash';
 export const EMBEDDING_MODEL_NAME = 'text-embedding-004';
 const ENABLE_LOCAL_RERANK = process.env.ENABLE_LOCAL_RERANK === '1';
 
-let aiInstance: GoogleGenAI | null = null;
-if (process.env.API_KEY) {
-    aiInstance = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Vercel AI Gateway client
+let gateway: OpenAI | null = null;
+if (process.env.VERCEL_AI_GATEWAY_TOKEN) {
+    gateway = new OpenAI({
+        apiKey: process.env.VERCEL_AI_GATEWAY_TOKEN,
+        baseURL: process.env.VERCEL_AI_GATEWAY_URL,
+    });
 } else {
-    console.error("API_KEY environment variable not set. AI features will be disabled.");
+    console.error('VERCEL_AI_GATEWAY_TOKEN environment variable not set. LLM routing disabled.');
+}
+
+// Google client for embeddings and legacy calls
+let aiInstance: GoogleGenAI | null = null;
+if (process.env.GOOGLE_API_KEY) {
+    aiInstance = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
+} else {
+    console.error("GOOGLE_API_KEY environment variable not set. AI features will be disabled.");
 }
 
 export const ai = aiInstance;
+
+const TASK_MODEL_MAP: Record<string, string> = {
+    semanticChunker: 'groq/meta/llama-3.1-8b',
+    evaluateNovelty: 'groq/meta/llama-3.1-8b',
+    webSearchSummary: 'groq/meta/llama-3.1-8b',
+    generateDivergentQuestion: 'deepseek/deepseek-v3.1-thinking',
+    planNextStep: 'deepseek/deepseek-v3.1-thinking',
+    generateInsight: 'google/gemini-2.5-pro',
+    runSelfEvolution: 'google/gemini-2.5-pro',
+};
+
+export async function routeLlmCall(
+    taskName: string,
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+    options: Partial<OpenAI.Chat.Completions.ChatCompletionCreateParams> = {}
+) {
+    if (!gateway) throw new Error('LLM gateway not configured');
+    const model = TASK_MODEL_MAP[taskName] ?? 'google/gemini-1.5-flash';
+    return gateway.chat.completions.create(
+        { model, messages, ...options },
+        { headers: { 'x-fallback-models': 'google/gemini-1.5-flash' } }
+    );
+}
 
 export const safeParseGeminiJson = <T,>(text: string): T | null => {
     const jsonText = text.trim();

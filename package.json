@@ -16,6 +16,7 @@
     "better-sqlite3": "^11.1.2",
     "i18next": "^25.4.0",
     "node-fetch": "^3.3.2",
+    "openai": "^4.104.0",
     "pdfjs-dist": "^5.4.54",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
