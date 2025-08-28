@@ -6,8 +6,8 @@ from unittest.mock import patch, AsyncMock
 # Set environment variable for API key before importing
 os.environ["GOOGLE_API_KEY"] = "test-key"
 
-from src.agentic_py.tools.mind_map import MindMapTool, _build_mind_map_from_transcript
-from src.agentic_py.models import MindMap, MindNode, MindEdge, PlanStep
+from src.agentic_py.tools.mind_map import MindMapTool
+from src.agentic_py.models import MindMap, MindNode, MindEdge
 
 # --- Test Data ---
 MOCK_MIND_MAP_1 = MindMap(

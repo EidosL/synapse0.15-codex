@@ -8,11 +8,11 @@ In a world of information overload, it's easy to lose track of valuable connecti
 
 ## ✨ Features
 
-- **📝 Note-Taking:** A simple and intuitive interface for creating, editing, and deleting notes. Your notes are saved automatically.
+- **📝 Note-Taking:** A simple and intuitive interface for creating, editing, and deleting notes. Your notes are saved automatically to a local database.
 - **☁️ AI-Powered Insights:** Synapse uses a generative AI model to find "synaptic links" between your notes, revealing hidden connections and relationships that you might have missed.
 - **📂 Bulk Upload:** Easily import your existing notes from `.md`, `.txt`, and `.pdf` files.
 - **🌐 Multilingual Support:** The application is available in multiple languages, and can process notes in any language supported by the AI model.
-- **🔒 Privacy-Focused:** All your notes and data are stored locally in your browser's local storage. No data is sent to a server, except for the chunks of text sent to the AI model for embedding.
+- **🔒 Privacy-Focused:** All your notes and data are stored locally on your machine in a SQLite database file (`synapse.db`). No note content is sent to a third-party server, except for the chunks of text sent to the AI model for insight generation.
 
 ## 🚀 How to Use
 
@@ -24,12 +24,12 @@ In a world of information overload, it's easy to lose track of valuable connecti
 
 ## 🛠️ How it Works
 
-Synapse uses a combination of techniques to find connections between your notes:
+Synapse uses a combination of techniques to find connections between your notes, all orchestrated by a Python backend:
 
-1.  **Semantic Chunking:** When you add a note, Synapse breaks it down into smaller, semantically related chunks. This allows the application to understand the meaning and context of your notes, rather than just matching keywords.
-2.  **Embeddings:** Each chunk is then converted into a numerical representation called an "embedding" using a generative AI model (Google's Gemini). These embeddings capture the semantic meaning of the text.
-3.  **Vector Store:** The embeddings are stored in a local vector store in your browser. A vector store is a specialized database that allows for very fast and efficient similarity searches.
-4.  **Synaptic Links:** When you ask Synapse to find connections for a note, it takes the chunks from that note, generates embeddings for them, and then searches the vector store for the most similar chunks from other notes. These connections are then presented to you as "synaptic links".
+1.  **Semantic Chunking:** When you add or update a note via the API, the backend breaks it down into smaller, semantically related chunks. This allows the application to understand the meaning and context of your notes, rather than just matching keywords.
+2.  **Embeddings:** Each chunk is then converted into a numerical representation called an "embedding" using a `sentence-transformers` model. These embeddings are stored alongside your notes in the local database.
+3.  **Vector Store (FAISS):** The embeddings are loaded into a FAISS index for fast and efficient similarity searches.
+4.  **Synaptic Links:** When you ask Synapse to find connections for a note, the backend uses a hybrid search (lexical + vector) to find the most similar chunks from other notes. These connections are then synthesized into "synaptic links" by a generative AI model.
 
 ## 🏃‍♀️ Getting Started: Running Synapse Locally
 
@@ -111,10 +111,10 @@ Synapse requires API keys for some of its features. You'll need to create a spec
 Now you're ready to start the application! You'll need to run both the backend and frontend servers in separate terminal windows.
 
 1.  **Start the Backend Server:**
-    In your first terminal window (with the Python virtual environment activated), run the following command:
+    In your first terminal window (with the Python virtual environment activated), run the following command. The `PYTHONPATH` is required so that the server can find the `src` module.
 
     ```bash
-    uvicorn server:app --reload
+    PYTHONPATH=. uvicorn server:app --reload
     ```
     The backend server will start on `http://localhost:8000`.
 

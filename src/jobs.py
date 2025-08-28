@@ -141,18 +141,21 @@ class JobStore:
                 del self._jobs[jid]
 
 job_store = JobStore()
-router = APIRouter(prefix="/api")
+router = APIRouter(
+    prefix="/api/jobs",
+    tags=["jobs"],
+)
 
 # ---- Status & Cancel Routes ---------------------------------------------------
-@router.get("/insights-status/{job_id}", response_model=JobView)
-async def insights_status(job_id: str):
+@router.get("/{job_id}", response_model=JobView)
+async def get_job_status(job_id: str):
     job_internal = await job_store.get(job_id)
     if not job_internal:
         # Check if it *was* a job that expired
         raise HTTPException(status_code=404, detail="Job not found or expired")
     return job_internal.view
 
-@router.post("/insights-status/{job_id}/cancel", response_model=JobView)
+@router.post("/{job_id}/cancel", response_model=JobView)
 async def cancel_job(job_id: str):
     try:
         await job_store.cancel(job_id)
