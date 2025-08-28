@@ -1,6 +1,5 @@
-import type { WebSearch } from '../types';
-
-export const searchWeb: WebSearch = {
+// src/agentic/adapters/webSearchAdapter.ts
+export class WebSearchAdapter {
   async search(q: string, k: number) {
     // The request is now proxied through our own backend to avoid CORS issues.
     const url = '/api/search';
@@ -33,5 +32,5 @@ export const searchWeb: WebSearch = {
       console.error('Backend search proxy request failed:', error);
       return []; // Return empty array on failure to avoid crashing the agentic loop.
     }
-  },
-};
+  }
+}

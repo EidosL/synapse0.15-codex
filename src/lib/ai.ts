@@ -13,8 +13,10 @@ import { shouldDeepen } from '../insight/depthController';
 import { logMetrics } from '../insight/logging';
 import { rerankLocal } from '../insight/reranker';
 import { maybeAutoDeepen } from '../agentic/autoController';
-import { searchWeb } from '../agentic/adapters/searchWeb';
-import { mindMapTool } from '../agentic/adapters/mindMapTool';
+import { WebSearchAdapter } from '../agentic/webSearchAdapter';
+import { mindMapTool } from '../agentic/mindMapService';
+
+const searchWeb = new WebSearchAdapter();
 import { verifyCandidates } from '../insight/verifier';
 import { useStore } from './store';
 import { useLogStore } from './logStore';

@@ -1,8 +1,7 @@
-// src/agentic/adapters/langextract.ts
-import fetch from "node-fetch";
+// src/agentic/langExtractService.ts
+import { LangExtractAdapter } from "./langExtractAdapter";
 import { MemoryType } from "../memory/types";
 import type { MemoryStore } from "../memory/stores/base";
-import { route as defaultRoute } from "../memory/router";
 
 type ExtractionOut = {
   klass: string; text: string;
@@ -10,6 +9,8 @@ type ExtractionOut = {
   spans: { start: number; end: number }[];
   source_uri?: string | null;
 };
+
+const langExtractAdapter = new LangExtractAdapter(""); // Server URL will be configured elsewhere
 
 export async function runLangExtract(
   serverUrl: string,
@@ -20,14 +21,11 @@ export async function runLangExtract(
     model_id?: string;
   }
 ): Promise<ExtractionOut[]> {
-  const res = await fetch(`${serverUrl}/extract`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model_id: "gemini-2.5-flash", ...args }),
-  });
-  if (!res.ok) throw new Error(`langextract ${res.status}`);
-  const json = await res.json();
-  return json.items as ExtractionOut[];
+  // This is a bit of a hack, the serverUrl should be injected more cleanly
+  if ((langExtractAdapter as any).serverUrl !== serverUrl) {
+    (langExtractAdapter as any).serverUrl = serverUrl;
+  }
+  return langExtractAdapter.extract(args);
 }
 
 const CLASS_TO_TYPE: Record<string, MemoryType> = {

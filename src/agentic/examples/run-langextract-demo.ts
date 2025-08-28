@@ -1,4 +1,4 @@
-import { runLangExtract, ingestExtractions } from "../adapters/langextract";
+import { runLangExtract, ingestExtractions } from "../langExtractService";
 import { InMemoryStore } from "../../memory/stores/memoryStore";
 
 async function main() {
