@@ -1,3 +1,22 @@
+// =================================================================================
+//
+// AI Orchestrator for Project Synapse
+//
+// This file acts as the central nervous system for all AI-related operations.
+// While the Insight Generator agent (`src/agentic/agenticLoop.ts`) is a key
+// component for deep exploration, this orchestrator manages the end-to-end
+// process of finding connections between notes.
+//
+// The orchestrator is responsible for:
+// 1. Calling the Python backend (`src/eureka_rag`) to perform note clustering
+//    and initial insight synthesis.
+// 2. Invoking the Insight Generator agent to deepen the analysis on promising insights.
+// 3. Managing other post-processing steps like multi-hop searches and self-evolution.
+//
+// If you are debugging the overall "find connections" feature, this file is your
+// starting point.
+//
+// =================================================================================
 import OpenAI from 'openai';
 import { GoogleGenAI, Type, Schema } from '@google/genai';
 import type { Dispatch, SetStateAction } from 'react';
