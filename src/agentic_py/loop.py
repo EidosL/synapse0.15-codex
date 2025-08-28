@@ -7,25 +7,7 @@ from .budget import AGENT_BUDGET, Tier
 from .planner import plan_next_step
 from .models import ToolResult
 
-# --- Placeholder Tools ---
-# In the next step, these will be replaced by real implementations in tools.py.
-# This allows us to build the loop logic without having the full tool implementation yet.
-
-class PlaceholderWebSearch:
-    async def search(self, q: str, k: int) -> List[Dict[str, str]]:
-        print(f"--- (Placeholder) WEB SEARCH: {q} ---")
-        await asyncio.sleep(1)
-        return [{"title": f"Fake Result for '{q}'", "snippet": "This is a placeholder snippet.", "url": "http://example.com"}]
-
-class PlaceholderMindMap:
-    async def update(self, transcript: str):
-        print("--- (Placeholder) MIND MAP UPDATE ---")
-        await asyncio.sleep(0.5)
-
-    async def answer(self, query: str) -> str:
-        print(f"--- (Placeholder) MIND MAP QUERY: {query} ---")
-        await asyncio.sleep(1)
-        return "This is a placeholder answer from the mind map."
+from .tools import WebSearchTool, MindMapTool
 
 # --- Agentic Context and Loop ---
 
@@ -117,11 +99,10 @@ async def maybe_auto_deepen(
     if sum(len(text) for text in evidence_texts) >= 1200:
         return None
 
-    # In a real implementation, the tools would be instantiated here
-    # or passed in from a higher-level context.
+    # Instantiate the real tools
     tools = {
-        "web": PlaceholderWebSearch(),
-        "mind": PlaceholderMindMap(),
+        "web": WebSearchTool(),
+        "mind": MindMapTool(),
     }
 
     ctx = AgenticContext(

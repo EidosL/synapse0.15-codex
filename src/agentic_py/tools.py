@@ -3,11 +3,7 @@ import json
 import os
 import google.generativeai as genai
 
-# This import is tricky. It assumes the server file is importable and
-# doesn't create circular dependencies. This is generally okay for a
-# simple, single-file server setup like this one.
-# A more complex app might use dependency injection.
-from server import core_web_search
+from src.utils import core_web_search
 from .models import MindMap
 
 
@@ -84,13 +80,13 @@ class MindMapTool:
             node_map = {n['id']: n for n in existing_graph['nodes']}
             for node in mind_map.nodes:
                 if node.id not in node_map:
-                    existing_graph['nodes'].append(node.dict())
+                    existing_graph['nodes'].append(node.model_dump())
 
             edge_set = {f"{e['s']}->{e['t']}:{e['rel']}" for e in existing_graph['edges']}
             for edge in mind_map.edges:
                 key = f"{edge.s}->{edge.t}:{edge.rel}"
                 if key not in edge_set:
-                    existing_graph['edges'].append(edge.dict())
+                    existing_graph['edges'].append(edge.model_dump())
 
             existing_graph['summaries'] = mind_map.summaries
             self.graphs[self.session_id] = existing_graph

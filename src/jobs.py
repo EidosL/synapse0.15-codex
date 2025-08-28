@@ -16,6 +16,7 @@ class JobState(str, Enum):
 class Phase(str, Enum):
     candidate_selection = "candidate_selection"
     initial_synthesis = "initial_synthesis"
+    multi_hop = "multi_hop"
     agent_refinement = "agent_refinement"
     finalizing = "finalizing"
 

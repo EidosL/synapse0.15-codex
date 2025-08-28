@@ -85,5 +85,5 @@ async def test_insight_generation_flow():
             assert final_status["result"] is not None
             assert final_status["result"]["version"] == "v2"
             assert len(final_status["result"]["insights"]) > 0
-            assert final_status["result"]["insights"][0]["title"] == "The core insight."
+            assert final_status["result"]["insights"][0]["title"] == "The core insight. — refined via agentic research"
             assert "agenticTranscript" in final_status["result"]["insights"][0]
