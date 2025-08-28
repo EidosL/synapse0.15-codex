@@ -6,29 +6,28 @@ This document provides a high-level overview of the Synapse system architecture.
 
 The Synapse system is composed of the following major components:
 
-*   **Frontend (React/TypeScript)**: The user interface of the application, built with React and TypeScript. It is responsible for rendering the notes, insights, and other UI elements. The frontend code is located in the `src/components` and `src/hooks` directories.
-*   **Backend (Python)**: The backend of the application, built with Python. It is responsible for the core logic of the application, including finding insights, and managing the data. The backend code is located in the `src/eureka_rag` and `src/agentic_py` directories.
-*   **Vector Store**: A vector store is used to store and retrieve vector embeddings of the notes. This is a key component of the insight generation process. The vector store is managed by the `src/lib/vectorStore.ts` and `src/hooks/useVectorStore.ts` files.
-*   **AI Models (Gemini/OpenAI)**: The system uses AI models from Google (Gemini) and OpenAI to perform various tasks, such as generating embeddings, summarizing text, and generating insights. The AI models are accessed via the `src/lib/ai.ts` file, which acts as a gateway to the different models.
-*   **Agentic System (TypeScript/Python)**: The agentic system is responsible for the autonomous exploration of topics to uncover new information and insights. The agentic system is composed of a TypeScript part (`src/agentic`) and a Python part (`src/agentic_py`).
+*   **Frontend (React/TypeScript)**: The user interface of the application, built with React and TypeScript. It is responsible for rendering the notes, insights, and other UI elements. The frontend communicates with the backend via a REST API. The frontend code is located in the `src/components`, `src/hooks`, and `src/lib` directories.
+*   **Backend (Python/FastAPI)**: The backend of the application, built with Python and FastAPI. It is responsible for all core logic, including note management, insight generation, and data persistence. The backend code is located in the `src/` directory, with API routers in `src/api`.
+*   **Database (SQLite)**: A SQLite database is used to persist all user data, including notes, chunks of notes, and their vector embeddings. This allows for a stateful backend and removes the need for the client to manage data.
+*   **Vector Store (FAISS)**: A FAISS index is used for efficient similarity search on note embeddings. The index is managed by the backend and persisted to disk, allowing for fast retrieval of candidate notes for insight generation.
+*   **AI Models (Gemini/OpenAI)**: The system uses AI models from Google (Gemini) and OpenAI to perform various tasks, such as generating embeddings, summarizing text, and generating insights.
+*   **Agentic System (TypeScript/Python)**: The agentic system is responsible for the autonomous exploration of topics to uncover new information and insights.
 
-## Data Flow
+## Data Flow for Note Management
 
-The following is a high-level overview of the data flow when a user wants to find insights for a note:
+1.  The user interacts with the UI to create, edit, or delete a note.
+2.  The frontend calls the appropriate endpoint on the backend's Note API (`/api/notes`).
+3.  The backend handles the request, performing the necessary database operations (Create, Read, Update, Delete).
+4.  When a note is created or updated, the backend automatically chunks its content, generates vector embeddings, and updates the FAISS index.
+5.  The frontend's state is updated with the response from the API.
 
-1.  The user clicks the "Find Insights" button in the frontend.
-2.  The frontend calls the `handleFindInsightsForNote` function in `src/lib/store.ts`.
-3.  The `handleFindInsightsForNote` function sends a request to the Python backend via the `runInsightJob` function.
-4.  The Python backend receives the request and runs the Eureka RAG pipeline (`src/eureka_rag/main.py`).
-5.  The Eureka RAG pipeline embeds the notes, clusters them, and generates summaries for each cluster.
+## Data Flow for Insight Generation
+
+1.  The user clicks the "Find Connections" button in the frontend for a specific note.
+2.  The frontend sends a request to the backend's `/api/generate-insights` endpoint, providing only the ID of the source note.
+3.  The backend starts an asynchronous job to handle the request.
+4.  The backend job runs the Eureka RAG pipeline, which now fetches all necessary data from the database and uses the backend FAISS index to find candidate notes.
+5.  The frontend polls the job status endpoint (`/api/jobs/{job_id}`) to get progress updates and the final result.
 6.  The results are returned to the frontend and displayed to the user as insights.
 
-## AI Orchestration
-
-The `src/lib/ai.ts` file is the central orchestrator for all AI-related operations. It is responsible for:
-
-*   Calling the Python backend to perform note clustering and initial insight synthesis.
-*   Invoking the Insight Generator agent to deepen the analysis on promising insights.
-*   Managing other post-processing steps like multi-hop searches and self-evolution.
-
-This architecture allows for a separation of concerns between the frontend, backend, and AI models, making the system more modular and easier to maintain.
+This stateful backend architecture provides a clean separation of concerns, enhances scalability, and lays the foundation for future features like multi-device sync and collaboration.

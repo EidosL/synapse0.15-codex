@@ -10,6 +10,9 @@ from src.eureka_rag.models import ChunkInput
 from src.agentic_py.loop import maybe_auto_deepen
 from src.progress import ProgressReporter
 from src.jobs import Phase, Insight, JobResult
+from sqlalchemy.ext.asyncio import AsyncSession
+from src.eureka_rag.retrieval import generate_search_queries, retrieve_candidate_notes
+from src.backend.ranking import rank_insights
 
 # --- Pipeline-specific Models ---
 class PipelineInput(BaseModel):
@@ -17,7 +20,6 @@ class PipelineInput(BaseModel):
     notes: List[Dict[str, Any]]
 
 # --- AI & Synthesis Logic ---
-from src.backend.ranking import rank_insights
 
 INSIGHT_SCHEMA = {
     "type": "object", "properties": {
@@ -113,15 +115,11 @@ EVIDENCE CHUNKS (from 3 notes):
         print(f"Error in generate_constellation_insight: {e}")
         return None
 
-
-from src.eureka_rag.retrieval import generate_search_queries, retrieve_candidate_notes, VectorStore
-from src.eureka_rag.embedder import Embedder
-
 async def find_bridging_insight(
     base_insight: Dict[str, Any],
     source_note: Dict[str, Any],
     all_notes: List[Dict[str, Any]],
-    vector_store: VectorStore,
+    db: AsyncSession,
 ) -> Optional[Dict[str, Any]]:
     """
     Tries to find a 3-way "constellation" insight by finding a bridging note.
@@ -137,7 +135,13 @@ async def find_bridging_insight(
         return None
 
     notes_to_search = [n for n in all_notes if n['id'] not in [source_note['id'], note_a_id]]
-    bridge_cand_ids = await retrieve_candidate_notes(bridge_queries, vector_store, notes_to_search, exclude_note_id=note_a_id, top_k=2)
+    bridge_cand_ids = await retrieve_candidate_notes(
+        queries=bridge_queries,
+        db=db,
+        all_notes=notes_to_search,
+        exclude_note_id=note_a_id,
+        top_k=2
+    )
 
     bridge_cands = [n for n in all_notes if n['id'] in bridge_cand_ids]
     if not bridge_cands:
@@ -170,7 +174,7 @@ async def find_bridging_insight(
 
 
 # --- Main Pipeline Orchestrator ---
-async def run_full_insight_pipeline(inp: PipelineInput, progress: ProgressReporter) -> JobResult:
+async def run_full_insight_pipeline(inp: PipelineInput, progress: ProgressReporter, db: AsyncSession) -> JobResult:
     await progress.update(Phase.candidate_selection, 5)
     all_chunks = [ChunkInput(id=f"{n['id']}:{i}", document_id=n['id'], text=p) for n in inp.notes for i, p in enumerate(n['content'].split('\n\n')) if p.strip()]
     if not all_chunks: raise ValueError("No chunks could be created from the provided notes.")
@@ -201,14 +205,12 @@ async def run_full_insight_pipeline(inp: PipelineInput, progress: ProgressReport
 
     # 2.5. Multi-hop "Bridging" Insight
     await progress.update(Phase.multi_hop, 55)
-    embedder = Embedder()
-    vector_store = VectorStore(inp.notes, embedder)
 
     constellation_insight = await find_bridging_insight(
         base_insight=top_insights_data[0],
         source_note=source_note,
         all_notes=inp.notes,
-        vector_store=vector_store
+        db=db
     )
 
     if constellation_insight and constellation_insight.get('confidence', 0) > top_insights_data[0].get('confidence', 0):

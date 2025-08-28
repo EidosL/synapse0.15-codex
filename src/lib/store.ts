@@ -1,19 +1,10 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
-import { findSynapticLink_legacy } from './ai';
 import { type JobView } from './api/insights';
 import { runInsightJob } from './jobRunner';
-
-import {
-    readFileContent,
-    chunkNoteContent,
-    embedChunks,
-    addNoteVectorsToStore
-} from './noteService';
 import type { Note, Insight, SearchDepth } from './types';
-import { getVectorStore } from './vectorStore';
 import i18n from '../context/i18n';
 import { useLogStore } from './logStore';
+import * as api from './api';
 
 type LoadingState = {
     active: boolean;
@@ -32,11 +23,10 @@ type AppState = {
     searchDepth: SearchDepth;
     newInsightCount: number;
     language: 'en' | 'zh';
-    novelty_scores: number[];
-    insight_notes: string[];
-    _hasHydrated: boolean;
+    isInitialized: boolean;
 
     // Actions
+    initialize: () => Promise<void>;
     setActiveTab: (tab: 'vault' | 'inbox') => void;
     setEditingNote: (note: Note | null) => void;
     setViewingNote: (note: Note | null) => void;
@@ -46,266 +36,196 @@ type AppState = {
     handleBulkUpload: (files: FileList) => Promise<void>;
     handleFindInsightsForNote: (noteId: string) => Promise<void>;
     handleUpdateInsight: (id: string, status: 'kept' | 'dismissed') => void;
-    processNotes: () => Promise<void>;
     setLanguage: (language: 'en' | 'zh') => void;
-    setHasHydrated: (hydrated: boolean) => void;
 };
 
-export const useStore = create<AppState>()(
-    persist(
-        (set, get) => ({
-            notes: [],
-            insights: [],
-            loadingState: { active: false, messages: [] },
-            activeTab: 'vault',
-            editingNote: null,
-            viewingNote: null,
-            isFindingLinks: null,
-            activeJob: null,
-            searchDepth: 'contextual',
-            newInsightCount: 0,
-            language: 'en',
-            novelty_scores: [],
-            insight_notes: [],
-            _hasHydrated: false,
+export const useStore = create<AppState>()((set, get) => ({
+    notes: [],
+    insights: [],
+    loadingState: { active: false, messages: [] },
+    activeTab: 'vault',
+    editingNote: null,
+    viewingNote: null,
+    isFindingLinks: null,
+    activeJob: null,
+    searchDepth: 'contextual',
+    newInsightCount: 0,
+    language: 'en',
+    isInitialized: false,
 
-            // Actions
-            setActiveTab: (tab) => set({ activeTab: tab }),
-            setEditingNote: (note) => set({ editingNote: note }),
-            setViewingNote: (note) => set({ viewingNote: note }),
-            setSearchDepth: (depth) => set({ searchDepth: depth }),
-            setLanguage: (language) => set({ language }),
-            setHasHydrated: (hydrated) => set({ _hasHydrated: hydrated }),
+    // Actions
+    initialize: async () => {
+        try {
+            const notes = await api.getNotes();
+            set({ notes, isInitialized: true });
+        } catch (error) {
+            console.error("Failed to load notes from backend:", error);
+            set({ isInitialized: true }); // Mark as initialized even on error to prevent re-fetching
+        }
+    },
+    setActiveTab: (tab) => set({ activeTab: tab }),
+    setEditingNote: (note) => set({ editingNote: note }),
+    setViewingNote: (note) => set({ viewingNote: note }),
+    setSearchDepth: (depth) => set({ searchDepth: depth }),
+    setLanguage: (language) => set({ language }),
 
-            handleSaveNote: async (noteToSave) => {
-                const { t } = i18n;
-                const language = i18n.language as 'en' | 'zh';
-                const vectorStore = getVectorStore();
-
-                const savingMsg = t('savingAndChunking');
-                useLogStore.getState().addThinkingStep(savingMsg);
-                set({ loadingState: { active: true, messages: [] } });
-
-                const parentChunks = await chunkNoteContent(noteToSave.content || '', noteToSave.title || '', language);
-                const childTexts = parentChunks.flatMap(pc => pc.children.map(c => c.text));
-
-                const noteWithChunks: Note = {
-                    id: noteToSave.id || `note-${Date.now()}`,
-                    createdAt: noteToSave.createdAt || new Date().toISOString(),
+    handleSaveNote: async (noteToSave) => {
+        set({ loadingState: { active: true, messages: [] } });
+        try {
+            let savedNote: Note;
+            if (noteToSave.id) {
+                savedNote = await api.updateNote(noteToSave.id, noteToSave);
+            } else {
+                savedNote = await api.createNote({
                     title: noteToSave.title || '',
                     content: noteToSave.content || '',
-                    chunks: childTexts,
-                    parentChunks,
-                };
-
-                const embeddingMsg = t('embeddingChunks');
-                useLogStore.getState().addThinkingStep(embeddingMsg);
-                set({ loadingState: { active: true, messages: [] } });
-                const embeddings = await embedChunks(childTexts);
-                addNoteVectorsToStore(noteWithChunks, embeddings, vectorStore);
-
-                set(state => {
-                    const existingNoteIndex = state.notes.findIndex(n => n.id === noteWithChunks.id);
-                    let newNotes: Note[];
-                    if (existingNoteIndex !== -1) {
-                        // Update existing note
-                        newNotes = [...state.notes];
-                        newNotes[existingNoteIndex] = noteWithChunks;
-                    } else {
-                        // Add new note
-                        newNotes = [...state.notes, noteWithChunks];
-                    }
-                    return { notes: newNotes, editingNote: null };
                 });
+            }
 
-                await get().handleFindInsightsForNote(noteWithChunks.id);
-                return noteWithChunks;
-            },
-
-            handleDeleteNote: (noteId) => {
-                const { t } = i18n;
-                if (window.confirm(t('deleteConfirmation'))) {
-                    const vectorStore = getVectorStore();
-                    vectorStore.removeNoteVectors(noteId);
-                    set(state => ({
-                        notes: state.notes.filter(n => n.id !== noteId),
-                        insights: state.insights.filter(i => i.newNoteId !== noteId && i.oldNoteId !== noteId),
-                    }));
+            set(state => {
+                const existingNoteIndex = state.notes.findIndex(n => n.id === savedNote.id);
+                const newNotes = [...state.notes];
+                if (existingNoteIndex !== -1) {
+                    newNotes[existingNoteIndex] = savedNote;
+                } else {
+                    newNotes.push(savedNote);
                 }
-            },
+                return { notes: newNotes, editingNote: null };
+            });
 
-            handleBulkUpload: async (files) => {
-                if (files.length === 0) return;
-                const { t } = i18n;
-                const language = i18n.language as 'en' | 'zh';
-                const vectorStore = getVectorStore();
+            await get().handleFindInsightsForNote(savedNote.id);
 
-                const readingMsg = t('readingFiles', { count: files.length });
-                useLogStore.getState().addThinkingStep(readingMsg);
-                set({ loadingState: { active: true, messages: [] } });
-
-                const notesToProcess = await Promise.all(Array.from(files).map(file => readFileContent(file)));
-
-                const chunkingNotesMsg = t('chunkingNotes', { count: notesToProcess.length });
-                useLogStore.getState().addThinkingStep(chunkingNotesMsg);
-                set(state => ({ ...state, loadingState: { ...state.loadingState, messages: [] } }));
-
-                const newNotes: Note[] = [];
-                for (const [index, noteData] of notesToProcess.entries()) {
-                    const progressMsg = t('chunkingProgress', { current: index + 1, total: notesToProcess.length, title: noteData.title });
-                    useLogStore.getState().addThinkingStep(progressMsg);
-                    set(state => ({ ...state, loadingState: { ...state.loadingState, messages: [] } }));
-                    const parentChunks = await chunkNoteContent(noteData.content, noteData.title, language);
-                    const childTexts = parentChunks.flatMap(pc => pc.children.map(c => c.text));
-
-                    newNotes.push({
-                        id: `note-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                        title: noteData.title,
-                        content: noteData.content,
-                        createdAt: new Date().toISOString(),
-                        chunks: childTexts,
-                        parentChunks,
-                    });
-                }
-
-                const embeddingMsg = t('generatingEmbeddings');
-                useLogStore.getState().addThinkingStep(embeddingMsg);
-                set({ loadingState: { active: true, messages: [] } });
-
-                const allChildTexts = newNotes.flatMap(note => note.chunks || []);
-                const allEmbeddings = await embedChunks(allChildTexts);
-
-                let embeddingIndex = 0;
-                for (const note of newNotes) {
-                    const noteEmbeddings = allEmbeddings.slice(embeddingIndex, embeddingIndex + (note.chunks?.length || 0));
-                    addNoteVectorsToStore(note, noteEmbeddings, vectorStore);
-                    embeddingIndex += note.chunks?.length || 0;
-                }
-
-                set(state => ({ notes: [...state.notes, ...newNotes], loadingState: { active: false, messages: [] } }));
-            },
-
-            handleFindInsightsForNote: async (noteId) => {
-                const { notes, searchDepth } = get();
-                const note = notes.find(n => n.id === noteId);
-                if (!note) return;
-
-                set({ isFindingLinks: noteId, activeJob: null, loadingState: { active: true, messages: [] } });
-
-                console.log("Using Python backend for insights...");
-                const payload = {
-                    source_note_id: note.id,
-                    notes: [note, ...notes.filter(n => n.id !== noteId)].map(n => ({ id: n.id, content: n.content, title: n.title })),
-                };
-
-                runInsightJob(
-                    payload,
-                    (jobUpdate) => {
-                        set({ activeJob: jobUpdate });
-                        const phase = jobUpdate.progress?.phase ?? 'Starting...';
-                        const pct = jobUpdate.progress?.pct ?? 0;
-                        useLogStore.getState().addThinkingStep(`${phase} (${pct}%)`);
-                    },
-                    (finalJob) => {
-                        set({ activeJob: finalJob, isFindingLinks: null, loadingState: { active: false, messages: [] } });
-                        if (finalJob.status === 'SUCCEEDED' && finalJob.result) {
-                            const newInsights: Insight[] = finalJob.result.insights.map((link: any, i: number) => ({
-                                ...link,
-                                newNoteId: note.id,
-                                oldNoteId: link.oldNoteId || 'unknown', // oldNoteId should be provided by the new backend now
-                                id: `insight-${Date.now()}-${i}`,
-                                status: 'new',
-                                createdAt: new Date().toISOString()
-                            }));
-                            set(state => ({ insights: [...state.insights, ...newInsights], activeTab: 'inbox' }));
-                        }
-                    },
-                    (error) => {
-                        console.error("Insight job failed:", error);
-                        set({ isFindingLinks: null, loadingState: { active: false, messages: [] } });
-                    }
-                );
-            },
-
-            handleUpdateInsight: (id, status) => {
-                set(state => ({
-                    insights: state.insights.map(i => i.id === id ? { ...i, status } : i),
-                }));
-            },
-
-            processNotes: async () => {
-                const { notes } = get();
-                const { t } = i18n;
-                const language = i18n.language as 'en' | 'zh';
-                const vectorStore = getVectorStore();
-
-                const notesNeedingChunking = notes.filter(n => !n.parentChunks || n.parentChunks.length === 0);
-                if (notesNeedingChunking.length > 0) {
-                    const chunkingMsg = t('loadingChunking', { count: notesNeedingChunking.length });
-                    useLogStore.getState().addThinkingStep(chunkingMsg);
-                    set({ loadingState: { active: true, messages: [] } });
-                    const updatedNotes = [...notes];
-
-                    for (const [index, note] of notesNeedingChunking.entries()) {
-                        const progressMsg = t('chunkingProgress', {current: index + 1, total: notesNeedingChunking.length, title: note.title});
-                        useLogStore.getState().addThinkingStep(progressMsg);
-                        set(state => ({...state, loadingState: {...state.loadingState, messages: []} }));
-                        const parentChunks = await chunkNoteContent(note.content, note.title, language);
-                        const noteIndex = updatedNotes.findIndex(n => n.id === note.id);
-                        if (noteIndex !== -1) {
-                            updatedNotes[noteIndex].parentChunks = parentChunks;
-                            updatedNotes[noteIndex].chunks = parentChunks.flatMap(pc => pc.children.map(c => c.text));
-                        }
-                    }
-                    set({ notes: updatedNotes, loadingState: { active: false, messages: [] } });
-                    return;
-                }
-
-                const notesToIndex = notes.filter(n => n.parentChunks && n.parentChunks.length > 0 && !vectorStore.isNoteIndexed(n.id));
-                if (notesToIndex.length > 0) {
-                    const indexingMsg = t('loadingIndexing', { count: notesToIndex.length });
-                    useLogStore.getState().addThinkingStep(indexingMsg);
-                    set({ loadingState: { active: true, messages: [] } });
-
-                    const allChildTexts = notesToIndex.flatMap(note => note.chunks || []);
-                    const allEmbeddings = await embedChunks(allChildTexts);
-
-                    let embeddingIndex = 0;
-                    for (const note of notesToIndex) {
-                        const noteEmbeddings = allEmbeddings.slice(embeddingIndex, embeddingIndex + (note.chunks?.length || 0));
-                        addNoteVectorsToStore(note, noteEmbeddings, vectorStore);
-                        embeddingIndex += note.chunks?.length || 0;
-                    }
-
-                    set({ loadingState: { active: false, messages: [] } });
-                }
-            },
-        }),
-        {
-            name: 'synapse-storage', // name of the item in the storage (must be unique)
-            storage: createJSONStorage(() => localStorage), // (optional) by default, 'localStorage' is used
-            version: 1, // a version number for the storage
-            onRehydrateStorage: () => (state) => {
-                state?.setHasHydrated(true);
-            },
-            migrate: (persistedState, version) => {
-                // here you can add migration logic for different versions
-                if (version === 0) {
-                    // example migration: if you added a new property to the state
-                    // (persistedState as any).newProperty = 'default value';
-                }
-                return persistedState;
-            },
-            partialize: (state) => ({
-                notes: state.notes,
-                insights: state.insights,
-                searchDepth: state.searchDepth,
-                language: state.language,
-                activeTab: state.activeTab,
-            }),
+            return savedNote;
+        } catch (error) {
+            console.error("Failed to save note to backend:", error);
+            return noteToSave as Note;
+        } finally {
+            set({ loadingState: { active: false, messages: [] } });
         }
-    )
-);
+    },
+
+    handleDeleteNote: async (noteId) => {
+        const { t } = i18n;
+        if (window.confirm(t('deleteConfirmation'))) {
+            try {
+                await api.deleteNote(noteId);
+                set(state => ({
+                    notes: state.notes.filter(n => n.id !== noteId),
+                    insights: state.insights.filter(i => i.newNoteId !== noteId && i.oldNoteId !== noteId),
+                }));
+            } catch (error) {
+                console.error("Failed to delete note from backend:", error);
+            }
+        }
+    },
+
+    handleFindInsightsForNote: async (noteId) => {
+        const note = get().notes.find(n => n.id === noteId);
+        if (!note) return;
+
+        set({ isFindingLinks: noteId, activeJob: null, loadingState: { active: true, messages: [] } });
+
+        const payload = { source_note_id: note.id };
+
+        runInsightJob(
+            payload,
+            (jobUpdate) => {
+                set({ activeJob: jobUpdate });
+                const phase = jobUpdate.progress?.phase ?? 'Starting...';
+                const pct = jobUpdate.progress?.pct ?? 0;
+                useLogStore.getState().addThinkingStep(`${phase} (${pct}%)`);
+            },
+            (finalJob) => {
+                set({ activeJob: finalJob, isFindingLinks: null, loadingState: { active: false, messages: [] } });
+                if (finalJob.status === 'SUCCEEDED' && finalJob.result) {
+                    const newInsights: Insight[] = finalJob.result.insights.map((link: any, i: number) => ({
+                        ...link,
+                        newNoteId: note.id,
+                        oldNoteId: link.oldNoteId || 'unknown',
+                        id: `insight-${Date.now()}-${i}`,
+                        status: 'new',
+                        createdAt: new Date().toISOString()
+                    }));
+                    set(state => ({ insights: [...state.insights, ...newInsights], activeTab: 'inbox' }));
+                }
+            },
+            (error) => {
+                console.error("Insight job failed:", error);
+                set({ isFindingLinks: null, loadingState: { active: false, messages: [] } });
+            }
+        );
+    },
+
+    handleBulkUpload: async (files) => {
+        if (files.length === 0) return;
+        const { t } = i18n;
+
+        const uploadingMsg = t('readingFiles', { count: files.length });
+        useLogStore.getState().addThinkingStep(uploadingMsg);
+        set({ loadingState: { active: true, messages: [] } });
+
+        const formData = new FormData();
+        Array.from(files).forEach(file => {
+            formData.append('files', file, file.name);
+        });
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', 'http://localhost:8000/api/imports/start', true);
+
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+                const percentComplete = Math.round((event.loaded / event.total) * 100);
+                useLogStore.getState().addThinkingStep(`Uploading... ${percentComplete}%`);
+            }
+        };
+
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                const response = JSON.parse(xhr.responseText);
+                const jobId = response.job_id;
+
+                useLogStore.getState().addThinkingStep('Upload complete. Processing on backend...');
+
+                const poll = setInterval(async () => {
+                    try {
+                        const jobStatus = await api.getJobStatus(jobId);
+                        set({ activeJob: jobStatus });
+                        const phase = jobStatus.progress?.phase ?? 'Processing...';
+                        const pct = jobStatus.progress?.pct ?? 0;
+                        useLogStore.getState().addThinkingStep(`${phase} (${pct}%)`);
+
+                        if (jobStatus.status === 'SUCCEEDED' || jobStatus.status === 'FAILED') {
+                            clearInterval(poll);
+                            set({ activeJob: null, loadingState: { active: false, messages: [] } });
+                            get().initialize();
+                        }
+                    } catch (error) {
+                        console.error("Failed to get job status:", error);
+                        clearInterval(poll);
+                        set({ activeJob: null, loadingState: { active: false, messages: [] } });
+                    }
+                }, 2000);
+
+            } else {
+                console.error('Upload failed:', xhr.statusText);
+                set({ loadingState: { active: false, messages: [] } });
+            }
+        };
+
+        xhr.onerror = () => {
+            console.error('Upload failed:', xhr.statusText);
+            set({ loadingState: { active: false, messages: [] } });
+        };
+
+        xhr.send(formData);
+    },
+
+    handleUpdateInsight: (id, status) => {
+        set(state => ({
+            insights: state.insights.map(i => i.id === id ? { ...i, status } : i),
+        }));
+    },
+}));
 
 // Recalculate newInsightCount whenever insights change
 useStore.subscribe(
@@ -316,5 +236,5 @@ useStore.subscribe(
     }
 );
 
-// Initial call to process notes
-useStore.getState().processNotes();
+// Initial call to load notes from the backend
+useStore.getState().initialize();
