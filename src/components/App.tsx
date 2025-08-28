@@ -14,8 +14,8 @@ export const App: React.FC = () => {
     const {
         activeTab,
         setActiveTab,
-        isEditing,
-        setIsEditing,
+        editingNote,
+        setEditingNote,
         viewingNote,
         setViewingNote,
         newInsightCount,
@@ -88,7 +88,7 @@ export const App: React.FC = () => {
                 {activeTab === 'inbox' && <Inbox />}
             </main>
 
-            {isEditing && <NoteEditor onClose={() => setIsEditing(false)} />}
+            {editingNote && <NoteEditor note={editingNote} onClose={() => setEditingNote(null)} />}
             {viewingNote && <NoteViewer note={viewingNote} onClose={() => setViewingNote(null)} />}
             {isFindingLinks && <ThinkingStatus job={activeJob} legacySteps={thinkingSteps} />}
 

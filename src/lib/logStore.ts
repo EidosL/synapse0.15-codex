@@ -24,6 +24,8 @@ type LogStoreState = {
   exportThinkingSteps: () => void;
 };
 
+const MAX_LOG_ENTRIES = 2000;
+
 export const useLogStore = create<LogStoreState>((set, get) => ({
   thinkingSteps: [],
   devLogs: [],
@@ -47,16 +49,31 @@ export const useLogStore = create<LogStoreState>((set, get) => ({
         const newSteps = state.thinkingSteps[0] === i18n.t('thinkingInProgress')
             ? [step]
             : [...state.thinkingSteps, step];
+
+        // Trim the array to the max size
+        if (newSteps.length > MAX_LOG_ENTRIES) {
+            newSteps.splice(0, newSteps.length - MAX_LOG_ENTRIES);
+        }
+
         return { thinkingSteps: newSteps };
     });
   },
 
   addDevLog: (log: Omit<DevLog, 'timestamp'>) => {
     const newLog = { ...log, timestamp: new Date().toISOString() };
-    set(state => ({ devLogs: [...state.devLogs, newLog] }));
+    set(state => {
+        const newLogs = [...state.devLogs, newLog];
 
-    // Forward the log to the dev window if it's open
-    get().devWindow?.postMessage({ type: 'devlog', log: newLog }, '*');
+        // Trim the array to the max size
+        if (newLogs.length > MAX_LOG_ENTRIES) {
+            newLogs.splice(0, newLogs.length - MAX_LOG_ENTRIES);
+        }
+
+        // Forward the log to the dev window if it's open
+        get().devWindow?.postMessage({ type: 'devlog', log: newLog }, '*');
+
+        return { devLogs: newLogs };
+    });
   },
 
   setDevWindow: (win: Window | null) => {
