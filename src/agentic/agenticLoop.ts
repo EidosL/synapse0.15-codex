@@ -1,7 +1,8 @@
-import type { WebSearch, MindMapTool, ToolResult } from './types';
+import type { ToolResult } from './types';
 import { planNextStep } from './planner';
 import { AGENT_BUDGET, type Tier } from './budget';
-import { ai, MODEL_NAME } from '../lib/ai';
+import type { Tool } from './tools/tool';
+import type { MindMapTool } from './tools/mindMapTool';
 
 export type AgenticContext = {
   tier: Tier; topic: string;
@@ -20,9 +21,7 @@ export type AgenticContext = {
  * The agent follows these steps:
  * 1.  **Planning**: Given a topic and a transcript of previous findings, the agent
  *     uses a planner (`src/agentic/planner.ts`) to decide on the next action.
- * 2.  **Tool Use**: The agent has access to two main tools:
- *     - `web_search`: It can search the web to find new information about the topic.
- *     - `mind_map`: It can interact with a mind map to store and retrieve information.
+ * 2.  **Tool Use**: The agent has access to a pluggable set of tools.
  * 3.  **Transcript**: The agent appends its actions and the results from its tools
  *     to a running transcript. This transcript serves as the agent's "short-term
  *     memory" and context for future planning steps.
@@ -30,12 +29,12 @@ export type AgenticContext = {
  *     that limits the number of steps and tool calls it can make in a single run.
  *
  * @param ctx The context for the agent, including the topic, transcript, and tier.
- * @param tools The tools available to the agent, such as web search and mind map.
+ * @param tools A list of tools available to the agent.
  * @returns The final context after the agent has finished its run.
  */
 export async function runAgenticInsight(
   ctx: AgenticContext,
-  tools: { web: WebSearch; mind: MindMapTool }
+  tools: Tool[]
 ){
   const budget = AGENT_BUDGET[ctx.tier];
   if (budget.maxSteps === 0) return ctx;
@@ -43,9 +42,14 @@ export async function runAgenticInsight(
   let steps = 0, toolCalls = 0;
   const log = (s:string)=> ctx.hooks?.onLog?.(s);
 
+  // Find the mind map tool, as it's a special case that needs to be updated each loop.
+  const mindMapTool = tools.find(t => t.name === 'mind_map') as MindMapTool | undefined;
+
   while (steps < budget.maxSteps && toolCalls < budget.maxToolCalls) {
     const transcriptText = ctx.transcript.join('\n');
-    await tools.mind.update(transcriptText);
+    if (mindMapTool) {
+      await mindMapTool.update(transcriptText);
+    }
 
     const plan = await planNextStep(transcriptText, ctx.mindHints, budget.tempPlan);
     if (!plan) break;
@@ -63,36 +67,15 @@ export async function runAgenticInsight(
         continue;
     }
 
-    let result: ToolResult = { action, content: '', ok: true };
-
-    if (action === 'web_search') {
-      const hits = await tools.web.search(message, 5);
-      const bullets = hits.map(h => `• ${h.title}: ${h.snippet}`).join('\n');
-      // Summarize to keep context lean using streaming
-      let summary = '';
-      if (ai) {
-        const stream = await ai.models.generateContentStream({
-          model: MODEL_NAME,
-          contents: `Summarize key facts useful for: "${expected}". Use only these bullets, no new claims.\n${bullets}`
-        });
-        for await (const chunk of stream) {
-          const text = chunk.text ?? '';
-          summary += text;
-          log(text);
-        }
-      } else {
-        summary = bullets;
-      }
-      result.content = `WEB_SUMMARY:\n${summary || bullets}`;
-      result.citations = hits.map(h => ({ url: h.url }));
-      toolCalls++;
+    const tool = tools.find(t => t.name === action);
+    if (!tool) {
+      ctx.transcript.push(`ERROR: Tool "${action}" not found.`);
+      steps++;
+      continue;
     }
 
-    if (action === 'mind_map') {
-      const ans = await tools.mind.answer(message);
-      result.content = `MINDMAP:\n${ans}`;
-      toolCalls++;
-    }
+    const result = await tool.execute(plan.step);
+    toolCalls++;
 
     ctx.hooks?.onTool?.(result);
     ctx.transcript.push(`TOOL[${action}] expected(${expected})\n${result.content.slice(0, 1200)}`);
