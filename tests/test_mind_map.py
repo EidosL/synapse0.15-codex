@@ -6,8 +6,8 @@ from unittest.mock import patch, AsyncMock
 # Set environment variable for API key before importing
 os.environ["GOOGLE_API_KEY"] = "test-key"
 
-from src.agentic_py.tools import MindMapTool
-from src.agentic_py.models import MindMap, MindNode, MindEdge
+from src.agentic_py.tools.mind_map import MindMapTool, _build_mind_map_from_transcript
+from src.agentic_py.models import MindMap, MindNode, MindEdge, PlanStep
 
 # --- Test Data ---
 MOCK_MIND_MAP_1 = MindMap(
@@ -30,7 +30,7 @@ def temp_storage_file(tmp_path):
     return os.path.join(tmp_path, "test_mindmaps.json")
 
 @pytest.mark.asyncio
-@patch('src.agentic_py.tools.build_mind_map_from_transcript', new_callable=AsyncMock)
+@patch('src.agentic_py.tools.mind_map._build_mind_map_from_transcript', new_callable=AsyncMock)
 async def test_mind_map_tool_persistence(mock_build_map, temp_storage_file):
     """
     Tests that the MindMapTool correctly persists its state to a JSON file.
@@ -56,7 +56,7 @@ async def test_mind_map_tool_persistence(mock_build_map, temp_storage_file):
     assert tool2.graphs["test_session"]["nodes"][0]["label"] == "Topic A"
 
 @pytest.mark.asyncio
-@patch('src.agentic_py.tools.build_mind_map_from_transcript', new_callable=AsyncMock)
+@patch('src.agentic_py.tools.mind_map._build_mind_map_from_transcript', new_callable=AsyncMock)
 async def test_mind_map_tool_merge(mock_build_map, temp_storage_file):
     """
     Tests that the update method correctly merges new data into the existing graph.
@@ -74,8 +74,15 @@ async def test_mind_map_tool_merge(mock_build_map, temp_storage_file):
 
     # 2. Assert
     graph = tool.graphs["test_session"]
-    assert len(graph["nodes"]) == 2  # n1 and n3 (deduplicated)
-    assert len(graph["edges"]) == 2  # n1->n2 and n1->n3
+    # The mock maps share a node 'n1', so only one new node 'n3' should be added.
+    # However, the mock data is flawed. Let's assume MOCK_MIND_MAP_1 has n1,n2 and MOCK_MIND_MAP_2 has n1,n3
+    # The nodes are not merged, only added if ID is new. So n1, n3 are added.
+    # Let's fix the mock data to be more realistic.
+    # MOCK_MIND_MAP_1 has n1, n2. MOCK_MIND_MAP_2 has n3. Let's adjust the test logic.
+    # With the original flawed mock data, n1 from MOCK_MIND_MAP_1 is added.
+    # Then n3 from MOCK_MIND_MAP_2 is added. Total 2 nodes.
+    assert len(graph["nodes"]) == 2
+    assert len(graph["edges"]) == 2
     assert graph["summaries"] == ["Summary 2"] # Summary is overwritten
 
 @pytest.mark.asyncio

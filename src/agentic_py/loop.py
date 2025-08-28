@@ -7,7 +7,9 @@ from .budget import AGENT_BUDGET, Tier
 from .planner import plan_next_step
 from .models import ToolResult
 
-from .tools import WebSearchTool, MindMapTool
+from .tools.base import Tool
+from .tools.web_search import WebSearchTool
+from .tools.mind_map import MindMapTool
 
 # --- Agentic Context and Loop ---
 
@@ -21,7 +23,7 @@ class AgenticContext(BaseModel):
     mindHints: List[str] = []
     hooks: Dict[str, Callable] = {}
 
-async def run_agentic_insight(ctx: AgenticContext, tools: Dict[str, Any]) -> AgenticContext:
+async def run_agentic_insight(ctx: AgenticContext, tools: List[Tool]) -> AgenticContext:
     """
     The main execution loop for the agent.
     It repeatedly plans, acts, and updates the transcript within a set budget.
@@ -34,9 +36,13 @@ async def run_agentic_insight(ctx: AgenticContext, tools: Dict[str, Any]) -> Age
     tool_calls = 0
     log = ctx.hooks.get('onLog', print)
 
+    # Find the mind map tool, as it's a special case that needs to be updated each loop.
+    mind_map_tool = next((t for t in tools if isinstance(t, MindMapTool)), None)
+
     while steps < budget.maxSteps and tool_calls < budget.maxToolCalls:
         transcript_text = "\n".join(ctx.transcript)
-        await tools['mind'].update(transcript_text)
+        if mind_map_tool:
+            await mind_map_tool.update(transcript_text)
 
         plan = await plan_next_step(transcript_text, ctx.mindHints, budget.tempPlan)
         if not plan:
@@ -57,20 +63,15 @@ async def run_agentic_insight(ctx: AgenticContext, tools: Dict[str, Any]) -> Age
             steps += 1
             continue
 
-        result = ToolResult(action=action, content='', ok=True)
+        tool_to_run = next((t for t in tools if t.name == action), None)
 
-        if action == 'web_search':
-            hits = await tools['web'].search(message, 5)
-            # TODO: Add summarization logic here, similar to the TS implementation.
-            bullets = "\n".join([f"• {h['title']}: {h['snippet']}" for h in hits])
-            result.content = f"WEB_SUMMARY:\n{bullets}"
-            result.citations = [{"url": h['url']} for h in hits]
-            tool_calls += 1
+        if not tool_to_run:
+            ctx.transcript.append(f"ERROR: Tool '{action}' not found.")
+            steps += 1
+            continue
 
-        elif action == 'mind_map':
-            ans = await tools['mind'].answer(message)
-            result.content = f"MINDMAP:\n{ans}"
-            tool_calls += 1
+        result = await tool_to_run.execute(plan.step)
+        tool_calls += 1
 
         on_tool_hook = ctx.hooks.get('onTool')
         if on_tool_hook:
@@ -100,10 +101,10 @@ async def maybe_auto_deepen(
         return None
 
     # Instantiate the real tools
-    tools = {
-        "web": WebSearchTool(),
-        "mind": MindMapTool(),
-    }
+    tools = [
+        WebSearchTool(),
+        MindMapTool(),
+    ]
 
     ctx = AgenticContext(
         tier=tier,

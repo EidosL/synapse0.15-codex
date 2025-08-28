@@ -1,29 +1,10 @@
-from typing import List, Dict, Any, Optional
-import json
 import os
-import google.generativeai as genai
+import json
+from typing import List, Dict, Any, Optional
 
-from src.utils import core_web_search
-from .models import MindMap
-
-
-class WebSearchTool:
-    """
-    A tool for searching the web, wrapping the core search logic from the server.
-    """
-    async def search(self, q: str, k: int) -> List[Dict[str, str]]:
-        """
-        Performs a web search and returns a list of results.
-        """
-        if not q:
-            return []
-
-        print(f"--- TOOL: WEB SEARCH for '{q}' ---")
-        results = await core_web_search(q, k)
-        print(f"--- Found {len(results)} results. ---")
-        return results
-
-# --- Mind Map Tool ---
+from .base import Tool
+from ..models import PlanStep, ToolResult, MindMap
+from ...util.genai_compat import genai
 
 MAP_SCHEMA = {
     "type": "object", "properties": {
@@ -33,11 +14,12 @@ MAP_SCHEMA = {
     }, "required": ["nodes", "edges", "summaries"],
 }
 
-async def build_mind_map_from_transcript(transcript: str) -> Optional[MindMap]:
-    API_KEY = os.getenv("GOOGLE_API_KEY")
-    if not API_KEY: return None
+async def _build_mind_map_from_transcript(transcript: str) -> Optional[MindMap]:
+    if not genai:
+        print("GenAI module not available, cannot build mind map.")
+        return None
 
-    genai.configure(api_key=API_KEY)
+    # The compatibility layer handles API key configuration.
     model = genai.GenerativeModel('gemini-1.5-flash')
 
     prompt = "Extract a MIND MAP from the transcript.\nReturn JSON with nodes (entity|concept|claim), edges (s,t,rel), and 1–3 short summaries.\nBe faithful; no hallucinations."
@@ -52,12 +34,24 @@ async def build_mind_map_from_transcript(transcript: str) -> Optional[MindMap]:
         print(f"An error occurred during mind map generation: {e}")
         return None
 
-class MindMapTool:
+
+class MindMapTool(Tool):
+    """
+    A tool for building and querying a mind map of the agent's transcript.
+    """
+    @property
+    def name(self) -> str:
+        return 'mind_map'
+
     def __init__(self, storage_path: str = "mindmaps.json", session_id: str = "synapse-session"):
         self.storage_path = storage_path
         self.session_id = session_id
         self.graphs: Dict[str, Dict[str, List[Any]]] = {}
         self._load()
+
+    async def execute(self, step: PlanStep) -> ToolResult:
+        ans = await self.answer(step.message)
+        return ToolResult(action=self.name, ok=True, content=f"MINDMAP:\n{ans}")
 
     def _load(self):
         if os.path.exists(self.storage_path):
@@ -73,7 +67,7 @@ class MindMapTool:
 
     async def update(self, transcript: str):
         print("--- TOOL: MIND MAP UPDATE ---")
-        mind_map = await build_mind_map_from_transcript(transcript)
+        mind_map = await _build_mind_map_from_transcript(transcript)
         if mind_map:
             existing_graph = self.graphs.get(self.session_id, {"nodes": [], "edges": [], "summaries": []})
 
