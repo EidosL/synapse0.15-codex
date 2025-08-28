@@ -10,6 +10,29 @@ export type AgenticContext = {
   hooks?: { onTool?: (r:ToolResult)=>void; onLog?: (s:string)=>void };
 };
 
+/**
+ * Runs the Insight Generator agent loop.
+ *
+ * This agent's purpose is to take a single topic and explore it to uncover new
+ * information and insights. It operates in an autonomous loop, using a set of
+ * tools to build a "transcript" of its findings.
+ *
+ * The agent follows these steps:
+ * 1.  **Planning**: Given a topic and a transcript of previous findings, the agent
+ *     uses a planner (`src/agentic/planner.ts`) to decide on the next action.
+ * 2.  **Tool Use**: The agent has access to two main tools:
+ *     - `web_search`: It can search the web to find new information about the topic.
+ *     - `mind_map`: It can interact with a mind map to store and retrieve information.
+ * 3.  **Transcript**: The agent appends its actions and the results from its tools
+ *     to a running transcript. This transcript serves as the agent's "short-term
+ *     memory" and context for future planning steps.
+ * 4.  **Budgeting**: The agent operates within a budget (`src/agentic/budget.ts`)
+ *     that limits the number of steps and tool calls it can make in a single run.
+ *
+ * @param ctx The context for the agent, including the topic, transcript, and tier.
+ * @param tools The tools available to the agent, such as web search and mind map.
+ * @returns The final context after the agent has finished its run.
+ */
 export async function runAgenticInsight(
   ctx: AgenticContext,
   tools: { web: WebSearch; mind: MindMapTool }
