@@ -1,8 +1,9 @@
-// src/agentic/adapters/mindMapTool.ts
+// src/agentic/mindMapService.ts
 import type { MindMapTool as IMindMap } from '../types';
 import { buildMindMapFromTranscript } from '../mindMap';
 
-// Try to import the Node-side tool if available (server/runtime)
+// Dynamically import the Node-side tool if available (server/runtime).
+// This allows the same codebase to run in both Node.js and browser environments.
 let NodeMindMap: any = null;
 try { NodeMindMap = (await import('../../lib/mindMapTool')).default; } catch {}
 

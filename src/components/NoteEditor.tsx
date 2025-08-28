@@ -1,7 +1,9 @@
 import React, { useState, useCallback } from 'react';
 import { useTranslation } from '../context/LanguageProvider';
 import { useStore } from '../lib/store';
-import { searchWeb } from '../agentic/adapters/searchWeb';
+import { WebSearchAdapter } from '../agentic/webSearchAdapter';
+
+const searchWeb = new WebSearchAdapter();
 import { ai, MODEL_NAME } from '../lib/ai';
 
 export const NoteEditor: React.FC<{ onClose: () => void; }> = ({ onClose }) => {
