@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { findSynapticLink } from './ai';
+import { findSynapticLink_legacy } from './ai';
+import { type JobView } from './api/insights';
+import { runInsightJob } from './jobRunner';
+
 import {
     readFileContent,
     chunkNoteContent,
@@ -25,6 +28,7 @@ type AppState = {
     isEditing: boolean;
     viewingNote: Note | null;
     isFindingLinks: string | null;
+    activeJob: JobView | null;
     searchDepth: SearchDepth;
     newInsightCount: number;
     language: 'en' | 'zh';
@@ -57,6 +61,7 @@ export const useStore = create<AppState>()(
             isEditing: false,
             viewingNote: null,
             isFindingLinks: null,
+            activeJob: null,
             searchDepth: 'contextual',
             newInsightCount: 0,
             language: 'en',
@@ -174,39 +179,43 @@ export const useStore = create<AppState>()(
             handleFindInsightsForNote: async (noteId) => {
                 const { notes, searchDepth } = get();
                 const note = notes.find(n => n.id === noteId);
-                if (note) {
-                    set({ isFindingLinks: noteId });
-                    const existingNotes = notes.filter(n => n.id !== noteId);
-                    if (existingNotes.length > 0) {
-                        const { t } = i18n;
-                        const language = i18n.language as 'en' | 'zh';
-                        const vectorStore = getVectorStore();
-                        const links = await findSynapticLink(
-                            note,
-                            existingNotes,
-                            (loadingState) => {
-                                const msg = loadingState.messages[loadingState.messages.length - 1];
-                                if (msg) useLogStore.getState().addThinkingStep(msg);
-                                set({ loadingState: { ...loadingState, messages: [] } });
-                            },
-                            vectorStore,
-                            language,
-                            t,
-                            searchDepth
-                        );
-                        if (links.length > 0) {
-                            const newInsights: Insight[] = links.map((link, i) => ({
+                if (!note) return;
+
+                set({ isFindingLinks: noteId, activeJob: null, loadingState: { active: true, messages: [] } });
+
+                console.log("Using Python backend for insights...");
+                const payload = {
+                    source_note_id: note.id,
+                    notes: [note, ...notes.filter(n => n.id !== noteId)].map(n => ({ id: n.id, content: n.content, title: n.title })),
+                };
+
+                runInsightJob(
+                    payload,
+                    (jobUpdate) => {
+                        set({ activeJob: jobUpdate });
+                        const phase = jobUpdate.progress?.phase ?? 'Starting...';
+                        const pct = jobUpdate.progress?.pct ?? 0;
+                        useLogStore.getState().addThinkingStep(`${phase} (${pct}%)`);
+                    },
+                    (finalJob) => {
+                        set({ activeJob: finalJob, isFindingLinks: null, loadingState: { active: false, messages: [] } });
+                        if (finalJob.status === 'SUCCEEDED' && finalJob.result) {
+                            const newInsights: Insight[] = finalJob.result.insights.map((link: any, i: number) => ({
                                 ...link,
                                 newNoteId: note.id,
+                                oldNoteId: link.oldNoteId || 'unknown', // oldNoteId should be provided by the new backend now
                                 id: `insight-${Date.now()}-${i}`,
                                 status: 'new',
                                 createdAt: new Date().toISOString()
                             }));
-                            set(state => ({ insights: [...state.insights, ...newInsights] }));
+                            set(state => ({ insights: [...state.insights, ...newInsights], activeTab: 'inbox' }));
                         }
+                    },
+                    (error) => {
+                        console.error("Insight job failed:", error);
+                        set({ isFindingLinks: null, loadingState: { active: false, messages: [] } });
                     }
-                    set({ isFindingLinks: null, activeTab: 'inbox' });
-                }
+                );
             },
 
             handleUpdateInsight: (id, status) => {
