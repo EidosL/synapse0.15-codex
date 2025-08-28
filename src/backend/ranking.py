@@ -36,6 +36,38 @@ async def counter_insight_check(
     if not API_KEY:
         return None
 
+    genai.configure(api_key=API_KEY)
+
+    # It's better to use a specific model for a specific task if possible.
+    # The TS code uses MODEL_NAME, which is a constant. I'll use a gemini model here.
+    model = genai.GenerativeModel('gemini-1.5-flash')
+
+    prompt = f"""You are an adversarial checker. Given an INSIGHT and its EVIDENCE snippets, find specific quotes that undermine the INSIGHT.
+
+Rules:
+- Use ONLY provided evidence. Return a JSON object with counterEvidence[], a one-line weakness, and a severity (0..1).
+
+INSIGHT:
+{insight_core}
+
+EVIDENCE:
+{chr(10).join([f"[{e.get('noteId', '')}::{e.get('childId', '')}] {e.get('text', '')}" for e in evidence])}
+"""
+
+    try:
+        response = await model.generate_content_async(
+            prompt,
+            generation_config={
+                "response_mime_type": "application/json",
+                "response_schema": COUNTER_SCHEMA,
+                "temperature": 0.1,
+            },
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"Error during counter-insight check: {e}")
+        return None
+
 
 async def rank_insights(insights: List[Dict[str, Any]], evidence_map: Dict[str, List[Dict[str, str]]]) -> List[Dict[str, Any]]:
     """
@@ -91,34 +123,3 @@ async def rank_insights(insights: List[Dict[str, Any]], evidence_map: Dict[str, 
     # 5. Sort by score
     scored_insights.sort(key=lambda x: x.get("score", 0), reverse=True)
     return scored_insights
-    genai.configure(api_key=API_KEY)
-
-    # It's better to use a specific model for a specific task if possible.
-    # The TS code uses MODEL_NAME, which is a constant. I'll use a gemini model here.
-    model = genai.GenerativeModel('gemini-1.5-flash')
-
-    prompt = f"""You are an adversarial checker. Given an INSIGHT and its EVIDENCE snippets, find specific quotes that undermine the INSIGHT.
-
-Rules:
-- Use ONLY provided evidence. Return a JSON object with counterEvidence[], a one-line weakness, and a severity (0..1).
-
-INSIGHT:
-{insight_core}
-
-EVIDENCE:
-{chr(10).join([f"[{e.get('noteId', '')}::{e.get('childId', '')}] {e.get('text', '')}" for e in evidence])}
-"""
-
-    try:
-        response = await model.generate_content_async(
-            prompt,
-            generation_config={
-                "response_mime_type": "application/json",
-                "response_schema": COUNTER_SCHEMA,
-                "temperature": 0.1,
-            },
-        )
-        return json.loads(response.text)
-    except Exception as e:
-        print(f"Error during counter-insight check: {e}")
-        return None

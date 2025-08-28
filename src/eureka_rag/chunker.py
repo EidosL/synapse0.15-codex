@@ -8,7 +8,7 @@ def chunk_document(document: Document) -> List[Chunk]:
     A paragraph is considered to be a block of text separated by one or more empty lines.
     """
     # Split by one or more newlines, which typically separate paragraphs
-    paragraphs = re.split(r'\\n\\s*\\n', document.content)
+    paragraphs = re.split(r'\n\s*\n', document.content)
 
     chunks = []
     for i, para in enumerate(paragraphs):
