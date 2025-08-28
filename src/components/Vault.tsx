@@ -13,7 +13,7 @@ export const Vault: React.FC<VaultProps> = ({ onUploadClick }) => {
         searchDepth,
         isFindingLinks,
         setSearchDepth,
-        setIsEditing,
+        setEditingNote,
         setViewingNote,
         handleFindInsightsForNote,
         handleDeleteNote,
@@ -28,7 +28,7 @@ export const Vault: React.FC<VaultProps> = ({ onUploadClick }) => {
                 <SearchDepthSelector value={searchDepth} onChange={setSearchDepth} />
                 <div className="vault-actions">
                     <button className="button button-secondary" onClick={onUploadClick}>{t('uploadFilesButton')}</button>
-                    <button className="button" onClick={() => setIsEditing(true)}>{t('newNoteButton')}</button>
+                    <button className="button" onClick={() => setEditingNote({})}>{t('newNoteButton')}</button>
                 </div>
             </div>
             {sortedNotes.length > 0 ? (
@@ -76,7 +76,7 @@ export const Vault: React.FC<VaultProps> = ({ onUploadClick }) => {
                     <h2>{t('emptyVaultTitle')}</h2>
                     <p>{t('emptyVaultMessage')}</p>
                     <div className="empty-state-actions">
-                        <button className="button" onClick={() => setIsEditing(true)}>{t('newNoteButton')}</button>
+                        <button className="button" onClick={() => setEditingNote({})}>{t('newNoteButton')}</button>
                         <button className="button button-secondary" onClick={onUploadClick}>{t('uploadFilesButton')}</button>
                     </div>
                 </div>

@@ -1,12 +1,13 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useTranslation } from '../context/LanguageProvider';
 import { useStore } from '../lib/store';
 import { WebSearchAdapter } from '../agentic/webSearchAdapter';
 
 const searchWeb = new WebSearchAdapter();
 import { ai, MODEL_NAME } from '../lib/ai';
+import { type Note } from '../lib/types';
 
-export const NoteEditor: React.FC<{ onClose: () => void; }> = ({ onClose }) => {
+export const NoteEditor: React.FC<{ note: Partial<Note>; onClose: () => void; }> = ({ note, onClose }) => {
     const [title, setTitle] = useState('');
     const [content, setContent] = useState('');
     const [selectedText, setSelectedText] = useState('');
@@ -14,10 +15,15 @@ export const NoteEditor: React.FC<{ onClose: () => void; }> = ({ onClose }) => {
     const { t } = useTranslation();
     const { handleSaveNote, setViewingNote } = useStore();
 
+    useEffect(() => {
+        setTitle(note.title || '');
+        setContent(note.content || '');
+    }, [note]);
+
     const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         if (title.trim() && content.trim()) {
-            handleSaveNote(title.trim(), content.trim());
+            handleSaveNote({ ...note, title: title.trim(), content: content.trim() });
             onClose();
         }
     };
@@ -58,7 +64,7 @@ Snippet: ${r.snippet}
             const summary = result.response.text();
 
             // Create a new note with the research findings and get the new note object back
-            const newResearchNote = await handleSaveNote(`Research: ${selectedText}`, summary);
+            const newResearchNote = await handleSaveNote({ title: `Research: ${selectedText}`, content: summary });
 
             // Close the current editor
             onClose();
@@ -78,7 +84,7 @@ Snippet: ${r.snippet}
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal-content" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
-                    <h2>{t('newNoteModalTitle')}</h2>
+                    <h2>{note.id ? t('editNoteModalTitle') : t('newNoteModalTitle')}</h2>
                     <button onClick={onClose} className="modal-close-btn" aria-label="Close note editor">&times;</button>
                 </div>
                 <form onSubmit={handleSubmit} className="note-editor-form">

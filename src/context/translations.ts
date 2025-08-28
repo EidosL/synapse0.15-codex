@@ -49,6 +49,8 @@ export const translations = {
     supportingEvidenceLabel: 'Supporting Evidence',
     // Modals
     newNoteModalTitle: 'New Note',
+    editNoteModalTitle: 'Edit Note',
+    editButton: 'Edit',
     saveNoteButton: 'Save Note',
     researchButton: 'Research',
     noteTitlePlaceholder: 'Note Title',
@@ -130,6 +132,8 @@ export const translations = {
     supportingEvidenceLabel: '支持证据',
     // Modals
     newNoteModalTitle: '新笔记',
+    editNoteModalTitle: '编辑笔记',
+    editButton: '编辑',
     saveNoteButton: '保存笔记',
     researchButton: '研究',
     noteTitlePlaceholder: '笔记标题',

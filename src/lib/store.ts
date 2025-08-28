@@ -25,7 +25,7 @@ type AppState = {
     insights: Insight[];
     loadingState: LoadingState;
     activeTab: 'vault' | 'inbox';
-    isEditing: boolean;
+    editingNote: Note | null;
     viewingNote: Note | null;
     isFindingLinks: string | null;
     activeJob: JobView | null;
@@ -38,10 +38,10 @@ type AppState = {
 
     // Actions
     setActiveTab: (tab: 'vault' | 'inbox') => void;
-    setIsEditing: (isEditing: boolean) => void;
+    setEditingNote: (note: Note | null) => void;
     setViewingNote: (note: Note | null) => void;
     setSearchDepth: (depth: SearchDepth) => void;
-    handleSaveNote: (title: string, content: string) => Promise<Note>;
+    handleSaveNote: (noteToSave: Partial<Note>) => Promise<Note>;
     handleDeleteNote: (noteId: string) => void;
     handleBulkUpload: (files: FileList) => Promise<void>;
     handleFindInsightsForNote: (noteId: string) => Promise<void>;
@@ -58,7 +58,7 @@ export const useStore = create<AppState>()(
             insights: [],
             loadingState: { active: false, messages: [] },
             activeTab: 'vault',
-            isEditing: false,
+            editingNote: null,
             viewingNote: null,
             isFindingLinks: null,
             activeJob: null,
@@ -71,13 +71,13 @@ export const useStore = create<AppState>()(
 
             // Actions
             setActiveTab: (tab) => set({ activeTab: tab }),
-            setIsEditing: (isEditing) => set({ isEditing }),
+            setEditingNote: (note) => set({ editingNote: note }),
             setViewingNote: (note) => set({ viewingNote: note }),
             setSearchDepth: (depth) => set({ searchDepth: depth }),
             setLanguage: (language) => set({ language }),
             setHasHydrated: (hydrated) => set({ _hasHydrated: hydrated }),
 
-            handleSaveNote: async (title, content) => {
+            handleSaveNote: async (noteToSave) => {
                 const { t } = i18n;
                 const language = i18n.language as 'en' | 'zh';
                 const vectorStore = getVectorStore();
@@ -86,14 +86,14 @@ export const useStore = create<AppState>()(
                 useLogStore.getState().addThinkingStep(savingMsg);
                 set({ loadingState: { active: true, messages: [] } });
 
-                const parentChunks = await chunkNoteContent(content, title, language);
+                const parentChunks = await chunkNoteContent(noteToSave.content || '', noteToSave.title || '', language);
                 const childTexts = parentChunks.flatMap(pc => pc.children.map(c => c.text));
 
-                const newNote: Note = {
-                    id: `note-${Date.now()}`,
-                    title,
-                    content,
-                    createdAt: new Date().toISOString(),
+                const noteWithChunks: Note = {
+                    id: noteToSave.id || `note-${Date.now()}`,
+                    createdAt: noteToSave.createdAt || new Date().toISOString(),
+                    title: noteToSave.title || '',
+                    content: noteToSave.content || '',
                     chunks: childTexts,
                     parentChunks,
                 };
@@ -102,15 +102,24 @@ export const useStore = create<AppState>()(
                 useLogStore.getState().addThinkingStep(embeddingMsg);
                 set({ loadingState: { active: true, messages: [] } });
                 const embeddings = await embedChunks(childTexts);
-                addNoteVectorsToStore(newNote, embeddings, vectorStore);
+                addNoteVectorsToStore(noteWithChunks, embeddings, vectorStore);
 
-                set(state => ({ notes: [...state.notes, newNote], isEditing: false }));
+                set(state => {
+                    const existingNoteIndex = state.notes.findIndex(n => n.id === noteWithChunks.id);
+                    let newNotes: Note[];
+                    if (existingNoteIndex !== -1) {
+                        // Update existing note
+                        newNotes = [...state.notes];
+                        newNotes[existingNoteIndex] = noteWithChunks;
+                    } else {
+                        // Add new note
+                        newNotes = [...state.notes, noteWithChunks];
+                    }
+                    return { notes: newNotes, editingNote: null };
+                });
 
-                // Don't call processNotes here, as the new note is already processed.
-                // await get().processNotes();
-
-                await get().handleFindInsightsForNote(newNote.id);
-                return newNote;
+                await get().handleFindInsightsForNote(noteWithChunks.id);
+                return noteWithChunks;
             },
 
             handleDeleteNote: (noteId) => {
@@ -275,14 +284,24 @@ export const useStore = create<AppState>()(
         {
             name: 'synapse-storage', // name of the item in the storage (must be unique)
             storage: createJSONStorage(() => localStorage), // (optional) by default, 'localStorage' is used
+            version: 1, // a version number for the storage
             onRehydrateStorage: () => (state) => {
                 state?.setHasHydrated(true);
+            },
+            migrate: (persistedState, version) => {
+                // here you can add migration logic for different versions
+                if (version === 0) {
+                    // example migration: if you added a new property to the state
+                    // (persistedState as any).newProperty = 'default value';
+                }
+                return persistedState;
             },
             partialize: (state) => ({
                 notes: state.notes,
                 insights: state.insights,
                 searchDepth: state.searchDepth,
                 language: state.language,
+                activeTab: state.activeTab,
             }),
         }
     )
