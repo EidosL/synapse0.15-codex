@@ -2,7 +2,8 @@ import pytest
 import asyncio
 from httpx import AsyncClient, ASGITransport
 from asgi_lifespan import LifespanManager
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+from fastapi import BackgroundTasks
 
 # Although we are testing the API, the test still needs to run the backend code,
 # so we need to set the environment variables.
@@ -11,8 +12,9 @@ os.environ["GOOGLE_API_KEY"] = "test-key"
 os.environ["SERPAPI_API_KEY"] = "test-key"
 
 from server import app
-from src.jobs import JobState
-from src.eureka_rag.models import ClusteringResult, ClusterSummary
+import backend_pipeline
+from jobs import JobState
+from eureka_rag.models import ClusteringResult, ClusterSummary
 
 # --- Test Data and Mocks ---
 
@@ -38,20 +40,32 @@ MOCK_NOTES = [
 # --- API Contract Test ---
 
 @pytest.mark.asyncio
-async def test_insight_generation_flow():
+async def test_insight_generation_flow(monkeypatch):
     """
     Tests the full API flow from starting a job to getting a completed status.
     Mocks out the expensive AI and agent calls to run quickly.
     """
-    # Patch the slow/expensive parts of the pipeline
-    with patch('src.backend_pipeline.run_chunk_pipeline') as mock_cluster, \
-         patch('src.backend_pipeline.generate_insight', new_callable=AsyncMock) as mock_gen_insight, \
-         patch('src.backend_pipeline.maybe_auto_deepen', new_callable=AsyncMock) as mock_agent:
+    # 1. Arrange: Mock the pipeline functions using monkeypatch
 
-        async with LifespanManager(app) as manager:
-          transport = ASGITransport(app=manager.app)
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            # 1. Arrange: Create notes and get their dynamic IDs
+    # This is the key change: we patch BackgroundTasks.add_task to run the task on the current event loop
+    def mock_add_task(self, task, *args, **kwargs):
+        asyncio.create_task(task(*args, **kwargs))
+    monkeypatch.setattr(BackgroundTasks, "add_task", mock_add_task)
+
+    mock_synthesis = AsyncMock(return_value=[MOCK_INSIGHT_RESULT])
+    monkeypatch.setattr(backend_pipeline, 'run_synthesis_and_ranking', mock_synthesis)
+
+    mock_agent = AsyncMock(return_value="Agent transcript")
+    monkeypatch.setattr(backend_pipeline, 'maybe_auto_deepen', mock_agent)
+
+    mock_cluster = MagicMock()
+    monkeypatch.setattr(backend_pipeline, 'run_chunk_pipeline', mock_cluster)
+
+
+    async with LifespanManager(app) as manager:
+        transport = ASGITransport(app=manager.app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # Create notes and get their dynamic IDs
             note1_res = await client.post("/api/notes/", json=MOCK_NOTES[0])
             note2_res = await client.post("/api/notes/", json=MOCK_NOTES[1])
             assert note1_res.status_code == 201
@@ -59,13 +73,11 @@ async def test_insight_generation_flow():
             note1_id = note1_res.json()["id"]
             note2_id = note2_res.json()["id"]
 
-            # Mock the return values of the patched functions using the dynamic IDs
+            # Configure the mock return value that depends on the dynamic IDs
             mock_cluster.return_value = ClusteringResult(
                 chunk_to_cluster_map={f"{note1_id}:0": 0, f"{note2_id}:0": 0},
                 cluster_summaries=[ClusterSummary(cluster_id=0, summary="summary")]
             )
-            mock_gen_insight.return_value = MOCK_INSIGHT_RESULT
-            mock_agent.return_value = "Agent transcript"
 
             # 2. Act
             # Start the job with the new payload

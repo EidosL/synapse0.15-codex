@@ -1,5 +1,5 @@
 from typing import List
-from .models import Chunk
+from eureka_rag.models import Chunk
 from sentence_transformers import SentenceTransformer
 
 class Embedder:

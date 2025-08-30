@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 
 from .base import Tool
 from ..models import PlanStep, ToolResult, MindMap
-from ...util.genai_compat import genai
+from util.genai_compat import genai
 
 MAP_SCHEMA = {
     "type": "object", "properties": {

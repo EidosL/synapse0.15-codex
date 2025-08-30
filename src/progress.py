@@ -1,6 +1,6 @@
 import time
 from typing import Optional, List, Dict
-from src.jobs import JobStore, Phase, Insight
+from jobs import JobStore, Phase, Insight
 
 class ProgressReporter:
     def __init__(self, store: JobStore, job_id: str, t0: float):

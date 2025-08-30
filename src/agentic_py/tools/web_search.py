@@ -3,8 +3,8 @@ from typing import List, Dict
 
 from .base import Tool
 from ..models import PlanStep, ToolResult
-from ...utils import core_web_search
-from ...util.genai_compat import generate_text
+from utils import core_web_search
+from util.genai_compat import generate_text
 
 class WebSearchTool(Tool):
     """

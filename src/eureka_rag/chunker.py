@@ -1,5 +1,5 @@
 from typing import List
-from .models import Document, Chunk
+from eureka_rag.models import Document, Chunk
 import re
 
 def chunk_document(document: Document) -> List[Chunk]:
