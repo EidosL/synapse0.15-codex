@@ -5,14 +5,14 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
 import google.generativeai as genai
-from eureka_rag.main import run_chunk_pipeline
-from eureka_rag.models import ChunkInput
-from agentic_py.loop import maybe_auto_deepen
-from progress import ProgressReporter
-from jobs import Phase, Insight, JobResult
+from src.eureka_rag.main import run_chunk_pipeline
+from src.eureka_rag.models import ChunkInput
+from src.agentic_py.loop import maybe_auto_deepen
+from src.progress import ProgressReporter
+from src.jobs import Phase, Insight, JobResult
 from sqlalchemy.ext.asyncio import AsyncSession
-from eureka_rag.retrieval import generate_search_queries, retrieve_candidate_notes
-from backend.ranking import rank_insights
+from src.eureka_rag.retrieval import generate_search_queries, retrieve_candidate_notes
+from src.backend.ranking import rank_insights
 
 # --- Pipeline-specific Models ---
 class PipelineInput(BaseModel):

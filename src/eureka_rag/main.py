@@ -1,8 +1,8 @@
 from typing import List
-from eureka_rag.models import Chunk, ChunkInput, ClusteringResult
-from eureka_rag.embedder import Embedder
-from eureka_rag.clusterer import Clusterer
-from eureka_rag.summarizer import summarize_clusters
+from .models import Chunk, ChunkInput, ClusteringResult
+from .embedder import Embedder
+from .clusterer import Clusterer
+from .summarizer import summarize_clusters
 
 def run_chunk_pipeline(chunks: List[ChunkInput]) -> ClusteringResult:
     """

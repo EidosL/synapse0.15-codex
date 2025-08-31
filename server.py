@@ -6,14 +6,14 @@ import asyncio
 from contextlib import asynccontextmanager
 
 # Clean imports for the new architecture
-from jobs import router as jobs_router, job_store, JobState, JobResult
-from progress import ProgressReporter
-from backend_pipeline import run_full_insight_pipeline, PipelineInput
-from database import models, database
-from services.vector_index_manager import vector_index_manager
-from api import notes as notes_router
-from api import search as search_router
-from api import imports as imports_router
+from src.jobs import router as jobs_router, job_store, JobState, JobResult
+from src.progress import ProgressReporter
+from src.backend_pipeline import run_full_insight_pipeline, PipelineInput
+from src.database import models, database
+from src.services.vector_index_manager import vector_index_manager
+from src.api import notes as notes_router
+from src.api import search as search_router
+from src.api import imports as imports_router
 import uuid
 
 # --- App Lifecycle ---
@@ -38,11 +38,11 @@ app.include_router(notes_router.router)
 app.include_router(search_router.router)
 app.include_router(imports_router.router)
 
-from api.schemas import GenerateInsightsRequest, StartResponse
+from src.api.schemas import GenerateInsightsRequest, StartResponse
 
 # --- Endpoints ---
 
-from database import crud, schemas
+from src.database import crud, schemas
 
 @app.post("/api/generate-insights", response_model=StartResponse, status_code=202)
 async def generate_insights(req: GenerateInsightsRequest, tasks: BackgroundTasks):

@@ -1,5 +1,5 @@
 from typing import List, Dict
-from eureka_rag.models import Chunk, ClusterSummary
+from .models import Chunk, ClusterSummary
 
 def summarize_clusters(
     chunks: List[Chunk],

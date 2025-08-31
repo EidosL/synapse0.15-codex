@@ -1,5 +1,5 @@
 from typing import List, Dict
-from eureka_rag.models import Chunk
+from .models import Chunk
 from sklearn.cluster import KMeans
 import numpy as np
 
