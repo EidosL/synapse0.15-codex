@@ -1,0 +1,25 @@
+Metadata-Version: 2.4
+Name: synapse
+Version: 0.0.1
+Summary: Synapse / Yaotong MCP Fusion scaffolding
+Requires-Python: >=3.10
+Requires-Dist: pydantic>=2.4
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: anyio>=4.0; extra == "dev"
+Requires-Dist: jsonschema>=4.22; extra == "dev"
+Requires-Dist: fastapi; extra == "dev"
+Requires-Dist: uvicorn[standard]; extra == "dev"
+Requires-Dist: google-generativeai<1.0,>=0.7; extra == "dev"
+Requires-Dist: httpx; extra == "dev"
+Requires-Dist: scikit-learn; extra == "dev"
+Requires-Dist: numpy; extra == "dev"
+Requires-Dist: sentence-transformers; extra == "dev"
+Requires-Dist: sqlalchemy; extra == "dev"
+Requires-Dist: alembic; extra == "dev"
+Requires-Dist: asyncpg; extra == "dev"
+Requires-Dist: faiss-cpu; extra == "dev"
+Requires-Dist: aiosqlite; extra == "dev"
+Requires-Dist: python-multipart; extra == "dev"
+Requires-Dist: asgi-lifespan; extra == "dev"

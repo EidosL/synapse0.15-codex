@@ -1,0 +1,15 @@
+agentic
+agentic_py
+api
+backend
+components
+context
+database
+demo
+eureka_rag
+hooks
+lib
+memory
+services
+synapse
+util

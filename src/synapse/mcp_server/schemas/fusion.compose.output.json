@@ -1,0 +1,30 @@
+{
+  "$id": "https://synapse.ai/schemas/fusion.compose.output.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "fusion.compose.output.v1",
+  "type": "object",
+  "required": ["pills"],
+  "properties": {
+    "pills": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id","role","core","rationale","hypotheses","evidenceRefs","confidence","uncertainty"],
+        "properties": {
+          "id": { "type": "string" },
+          "role": { "type": "string", "enum": ["Base","Tonic","Catalyst"] },
+          "core": { "type": "string" },
+          "rationale": { "type": "string" },
+          "hypotheses": { "type": "array", "items": { "type": "string" } },
+          "evidenceRefs": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "uncertainty": { "type": "array", "items": { "type": "string" } },
+          "lineage": { "type": "object", "additionalProperties": true }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

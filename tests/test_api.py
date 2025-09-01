@@ -2,7 +2,8 @@ import pytest
 import asyncio
 from httpx import AsyncClient, ASGITransport
 from asgi_lifespan import LifespanManager
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+from fastapi import BackgroundTasks
 
 # Although we are testing the API, the test still needs to run the backend code,
 # so we need to set the environment variables.
@@ -10,24 +11,10 @@ import os
 os.environ["GOOGLE_API_KEY"] = "test-key"
 os.environ["SERPAPI_API_KEY"] = "test-key"
 
-from server import app
-from src.jobs import JobState
-from src.eureka_rag.models import ClusteringResult, ClusterSummary
+import sentence_transformers
+from jobs import JobState, JobResult, Insight
 
 # --- Test Data and Mocks ---
-
-MOCK_INSIGHT_RESULT = {
-    "mode": "eureka",
-    "reframedProblem": "A new way of seeing the problem.",
-    "insightCore": "The core insight.",
-    "selectedHypothesisName": "hyp1",
-    "hypotheses": [{"name": "hyp1", "statement": "...", "predictedEvidence": [], "disconfirmers": [], "prior": 0.1, "posterior": 0.8}],
-    "eurekaMarkers": {"suddennessProxy": 0.9, "fluency": 0.8, "conviction": 0.9, "positiveAffect": 0.9},
-    "bayesianSurprise": 0.7,
-    "evidenceRefs": [],
-    "test": "A test.",
-    "risks": []
-}
 
 MOCK_NOTES = [
     # Using dynamic IDs is not ideal for mocks, but for this test, we create them first.
@@ -38,34 +25,44 @@ MOCK_NOTES = [
 # --- API Contract Test ---
 
 @pytest.mark.asyncio
-async def test_insight_generation_flow():
+async def test_insight_generation_flow(monkeypatch):
     """
     Tests the full API flow from starting a job to getting a completed status.
     Mocks out the expensive AI and agent calls to run quickly.
     """
-    # Patch the slow/expensive parts of the pipeline
-    with patch('src.backend_pipeline.run_chunk_pipeline') as mock_cluster, \
-         patch('src.backend_pipeline.generate_insight', new_callable=AsyncMock) as mock_gen_insight, \
-         patch('src.backend_pipeline.maybe_auto_deepen', new_callable=AsyncMock) as mock_agent:
+    # 1. Arrange: Mock the pipeline functions using monkeypatch
 
-        async with LifespanManager(app) as manager:
-          transport = ASGITransport(app=manager.app)
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            # 1. Arrange: Create notes and get their dynamic IDs
+    sentence_transformers.SentenceTransformer = MagicMock(return_value=MagicMock(encode=lambda texts, convert_to_tensor=False: []))
+    import server
+    from server import app
+    import src.services.embedding_service as embedding_service
+
+    # This is the key change: we patch BackgroundTasks.add_task to run the task on the current event loop
+    def mock_add_task(self, task, *args, **kwargs):
+        asyncio.create_task(task(*args, **kwargs))
+    monkeypatch.setattr(BackgroundTasks, "add_task", mock_add_task)
+
+    async def mock_generate_and_store_embeddings_for_note(note, db):
+        return
+    monkeypatch.setattr(embedding_service, 'generate_and_store_embeddings_for_note', mock_generate_and_store_embeddings_for_note)
+
+    mock_result = JobResult(
+        version="v2",
+        insights=[Insight(insight_id="1", title="The core insight. — refined via agentic research", score=0.9, agenticTranscript="Agent transcript")]
+    )
+    mock_pipeline = AsyncMock(return_value=mock_result)
+    monkeypatch.setattr(server, 'run_full_insight_pipeline', mock_pipeline)
+
+
+    async with LifespanManager(app) as manager:
+        transport = ASGITransport(app=manager.app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # Create notes and get their dynamic IDs
             note1_res = await client.post("/api/notes/", json=MOCK_NOTES[0])
             note2_res = await client.post("/api/notes/", json=MOCK_NOTES[1])
             assert note1_res.status_code == 201
             assert note2_res.status_code == 201
             note1_id = note1_res.json()["id"]
-            note2_id = note2_res.json()["id"]
-
-            # Mock the return values of the patched functions using the dynamic IDs
-            mock_cluster.return_value = ClusteringResult(
-                chunk_to_cluster_map={f"{note1_id}:0": 0, f"{note2_id}:0": 0},
-                cluster_summaries=[ClusterSummary(cluster_id=0, summary="summary")]
-            )
-            mock_gen_insight.return_value = MOCK_INSIGHT_RESULT
-            mock_agent.return_value = "Agent transcript"
 
             # 2. Act
             # Start the job with the new payload

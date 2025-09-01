@@ -1,0 +1,26 @@
+{
+  "$id": "https://synapse.ai/schemas/facet.extract.input.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "facet.extract.input.v1",
+  "type": "object",
+  "required": ["chunks"],
+  "properties": {
+    "chunks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "text"],
+        "properties": {
+          "id": { "type": "string" },
+          "text": { "type": "string" },
+          "meta": { "type": "object", "additionalProperties": true }
+        },
+        "additionalProperties": false
+      }
+    },
+    "model_preset": { "type": "string" },
+    "max_facets_per_chunk": { "type": "integer", "minimum": 1, "default": 8 }
+  },
+  "additionalProperties": false
+}
