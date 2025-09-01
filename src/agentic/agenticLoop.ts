@@ -1,5 +1,6 @@
 import type { ToolResult } from './types';
 import { planNextStep } from './planner';
+import { clampTranscript } from './contextPolicy';
 import { AGENT_BUDGET, type Tier } from './budget';
 import type { Tool } from './tools/tool';
 import type { MindMapTool } from './tools/mindMapTool';
@@ -46,6 +47,7 @@ export async function runAgenticInsight(
   const mindMapTool = tools.find(t => t.name === 'mind_map') as MindMapTool | undefined;
 
   while (steps < budget.maxSteps && toolCalls < budget.maxToolCalls) {
+    ctx.transcript = clampTranscript(ctx.transcript, budget.contextCapChars);
     const transcriptText = ctx.transcript.join('\n');
     if (mindMapTool) {
       await mindMapTool.update(transcriptText);
