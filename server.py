@@ -63,7 +63,10 @@ async def generate_insights(req: GenerateInsightsRequest, tasks: BackgroundTasks
                 try:
                     all_notes_db = await crud.get_notes(db, limit=1000) # A reasonable limit for now
                     # Convert SQLAlchemy models to dicts for the pipeline
-                    all_notes = [schemas.Note.from_orm(n).model_dump(mode='json') for n in all_notes_db]
+                    all_notes = [
+                        schemas.Note.model_validate(n).model_dump(mode="json")
+                        for n in all_notes_db
+                    ]
 
                     if not all_notes:
                         raise ValueError("No notes found in the database.")

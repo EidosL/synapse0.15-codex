@@ -31,6 +31,10 @@ class Clusterer:
         else:
             n_clusters = self.n_clusters
 
+        # Ensure we don't request more clusters than distinct points
+        unique_points = np.unique(embeddings, axis=0)
+        n_clusters = min(n_clusters, len(unique_points))
+
         if n_clusters <= 0:
             return {}
 
