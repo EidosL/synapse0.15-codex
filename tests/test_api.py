@@ -11,25 +11,10 @@ import os
 os.environ["GOOGLE_API_KEY"] = "test-key"
 os.environ["SERPAPI_API_KEY"] = "test-key"
 
-from server import app
-import backend_pipeline
-from jobs import JobState
-from eureka_rag.models import ClusteringResult, ClusterSummary
+import sentence_transformers
+from jobs import JobState, JobResult, Insight
 
 # --- Test Data and Mocks ---
-
-MOCK_INSIGHT_RESULT = {
-    "mode": "eureka",
-    "reframedProblem": "A new way of seeing the problem.",
-    "insightCore": "The core insight.",
-    "selectedHypothesisName": "hyp1",
-    "hypotheses": [{"name": "hyp1", "statement": "...", "predictedEvidence": [], "disconfirmers": [], "prior": 0.1, "posterior": 0.8}],
-    "eurekaMarkers": {"suddennessProxy": 0.9, "fluency": 0.8, "conviction": 0.9, "positiveAffect": 0.9},
-    "bayesianSurprise": 0.7,
-    "evidenceRefs": [],
-    "test": "A test.",
-    "risks": []
-}
 
 MOCK_NOTES = [
     # Using dynamic IDs is not ideal for mocks, but for this test, we create them first.
@@ -47,19 +32,26 @@ async def test_insight_generation_flow(monkeypatch):
     """
     # 1. Arrange: Mock the pipeline functions using monkeypatch
 
+    sentence_transformers.SentenceTransformer = MagicMock(return_value=MagicMock(encode=lambda texts, convert_to_tensor=False: []))
+    import server
+    from server import app
+    import src.services.embedding_service as embedding_service
+
     # This is the key change: we patch BackgroundTasks.add_task to run the task on the current event loop
     def mock_add_task(self, task, *args, **kwargs):
         asyncio.create_task(task(*args, **kwargs))
     monkeypatch.setattr(BackgroundTasks, "add_task", mock_add_task)
 
-    mock_synthesis = AsyncMock(return_value=[MOCK_INSIGHT_RESULT])
-    monkeypatch.setattr(backend_pipeline, 'run_synthesis_and_ranking', mock_synthesis)
+    async def mock_generate_and_store_embeddings_for_note(note, db):
+        return
+    monkeypatch.setattr(embedding_service, 'generate_and_store_embeddings_for_note', mock_generate_and_store_embeddings_for_note)
 
-    mock_agent = AsyncMock(return_value="Agent transcript")
-    monkeypatch.setattr(backend_pipeline, 'maybe_auto_deepen', mock_agent)
-
-    mock_cluster = MagicMock()
-    monkeypatch.setattr(backend_pipeline, 'run_chunk_pipeline', mock_cluster)
+    mock_result = JobResult(
+        version="v2",
+        insights=[Insight(insight_id="1", title="The core insight. — refined via agentic research", score=0.9, agenticTranscript="Agent transcript")]
+    )
+    mock_pipeline = AsyncMock(return_value=mock_result)
+    monkeypatch.setattr(server, 'run_full_insight_pipeline', mock_pipeline)
 
 
     async with LifespanManager(app) as manager:
@@ -71,13 +63,6 @@ async def test_insight_generation_flow(monkeypatch):
             assert note1_res.status_code == 201
             assert note2_res.status_code == 201
             note1_id = note1_res.json()["id"]
-            note2_id = note2_res.json()["id"]
-
-            # Configure the mock return value that depends on the dynamic IDs
-            mock_cluster.return_value = ClusteringResult(
-                chunk_to_cluster_map={f"{note1_id}:0": 0, f"{note2_id}:0": 0},
-                cluster_summaries=[ClusterSummary(cluster_id=0, summary="summary")]
-            )
 
             # 2. Act
             # Start the job with the new payload
