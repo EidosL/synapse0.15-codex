@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, Any
+from typing import Dict, Any, List
 from synapse.yaotong.models.recipe import Recipe, ProviderCfg
 from synapse.yaotong.tooling.base import LocalTool, MCPTool, ToolHandle
 from synapse.yaotong.mcp.client_manager import MCPClientManager
@@ -9,6 +9,9 @@ from synapse.yaotong.tools.local_fusion import fusion_compose_tool
 class WorkingMemory(dict):
     def snapshot(self) -> Dict[str, Any]:
         return dict(self)
+
+    def record_note_refs(self, pill_id: str, refs: List[str]) -> None:
+        self.setdefault("noteRefs", {})[pill_id] = list(refs)
 
 class YaoTong:
     def __init__(self, recipe: Recipe, mcp: MCPClientManager | None = None):
@@ -48,4 +51,6 @@ class YaoTong:
         # phase 3: fusion compose
         pills = await self.tools["fusion_compose"].call({"hypotheses": hyps})
         self.wm["pills"] = pills.get("pills", [])
-        return {"goal": goal, "pills": self.wm["pills"], "trace": {"hits": self.wm["hits"]}}
+        for p in self.wm["pills"]:
+            self.wm.record_note_refs(p.get("id", ""), p.get("evidenceRefs", []))
+        return {"goal": goal, "pills": self.wm["pills"], "trace": {"hits": self.wm["hits"], "noteRefs": self.wm.get("noteRefs", {})}}

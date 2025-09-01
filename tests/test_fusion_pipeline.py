@@ -15,3 +15,4 @@ async def test_min_fusion_flow():
     await yt.setup()
     result = await yt.run("Relation between transformers and graph reasoning")
     assert "pills" in result and isinstance(result["pills"], list)
+    assert "noteRefs" in result.get("trace", {})
