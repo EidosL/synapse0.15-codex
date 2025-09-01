@@ -36,7 +36,9 @@ class YaoTong:
     async def run(self, goal: str) -> Dict[str, Any]:
         self.wm["goal"] = goal
         # phase 1: retrieval (mocked local tool by default)
-        out = await self.tools["retrieve"].call({"query": goal, "top_k": 10})
+        out = await self.tools["retrieve"].call(
+            {"query": goal, "top_k": self.recipe.notes_limit}
+        )
         self.wm["hits"] = out.get("hits", [])
         # phase 2: (placeholder) hypotheses
         hyps = [{
@@ -48,4 +50,11 @@ class YaoTong:
         # phase 3: fusion compose
         pills = await self.tools["fusion_compose"].call({"hypotheses": hyps})
         self.wm["pills"] = pills.get("pills", [])
-        return {"goal": goal, "pills": self.wm["pills"], "trace": {"hits": self.wm["hits"]}}
+        # optional graph module
+        if self.recipe.use_graph:
+            # placeholder for future graph processing
+            self.wm["graph"] = []
+        trace = {"hits": self.wm["hits"]}
+        if self.recipe.use_graph:
+            trace["graph"] = self.wm["graph"]
+        return {"goal": goal, "pills": self.wm["pills"], "trace": trace}
