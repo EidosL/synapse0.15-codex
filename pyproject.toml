@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "synapse"
+version = "0.0.1"
+description = "Synapse / Yaotong MCP Fusion scaffolding"
+requires-python = ">=3.10"
+dependencies = [
+  "pydantic>=2.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pytest-asyncio>=0.23",
+  "anyio>=4.0",
+  "jsonschema>=4.22",
+  "fastapi",
+  "uvicorn[standard]",
+  "google-generativeai>=0.7,<1.0",
+  "httpx",
+  "scikit-learn",
+  "numpy",
+  "sentence-transformers",
+  "sqlalchemy",
+  "alembic",
+  "asyncpg",
+  "faiss-cpu",
+  "aiosqlite",
+  "python-multipart",
+  "asgi-lifespan",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_mode = "auto"
