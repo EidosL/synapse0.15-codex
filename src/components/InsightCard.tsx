@@ -52,67 +52,135 @@ export const InsightCard: React.FC<{ insight: Insight; notes: Note[]; onUpdate: 
     const [viewingNotes, setViewingNotes] = useState(false);
     const [isThinkingVisible, setIsThinkingVisible] = useState(false);
     const { t } = useTranslation();
-    const newNote = notes.find(n => n.id === insight.newNoteId);
-    const oldNote = notes.find(n => n.id === insight.oldNoteId);
 
-    const selectedHypothesis = useMemo(() => 
-        insight.hypotheses.find(h => h.name === insight.selectedHypothesisName),
-        [insight.hypotheses, insight.selectedHypothesisName]
+    const newNote = notes.find(n => n.id === insight.newNoteId);
+    const oldNote = insight.oldNoteId ? notes.find(n => n.id === insight.oldNoteId) : undefined;
+
+    const selectedHypothesis = useMemo(() => {
+        if (!insight.hypotheses || !insight.selectedHypothesisName) return undefined;
+        return insight.hypotheses.find(h => h.name === insight.selectedHypothesisName);
+    }, [insight.hypotheses, insight.selectedHypothesisName]);
+
+    const isRich = Boolean(
+        insight.mode && insight.insightCore && insight.eurekaMarkers && selectedHypothesis && newNote && oldNote
     );
 
-    if (!newNote || !oldNote || !selectedHypothesis) return null; // Or render a fallback for older insight formats
+    // Fallback: minimal/legacy insight rendering
+    if (!isRich) {
+        return (
+            <div className={`insight-card ${insight.status === 'kept' ? 'kept' : ''}`}>
+                <div className="insight-card-header">Insight</div>
+                <div className="insight-suggestion">
+                    <strong>{t('insightCoreLabel')}</strong>
+                    <blockquote>{insight.title || insight.insightCore || 'Untitled Insight'}</blockquote>
+                </div>
+                {insight.snippet && (
+                    <div className="insight-evidence">
+                        <strong>Summary</strong>
+                        <p>{insight.snippet}</p>
+                    </div>
+                )}
+                {newNote && (
+                    <div className="insight-connection-group">
+                        <div className="insight-connection">
+                            <span>{t('newNoteLabel')}</span>
+                            <p>{newNote.title}</p>
+                        </div>
+                        {oldNote && (
+                            <div className="insight-connection">
+                                <span>{t('connectedToLabel')}</span>
+                                <p>{oldNote.title}</p>
+                            </div>
+                        )}
+                    </div>
+                )}
+                <div className="insight-actions">
+                    {newNote && oldNote && (
+                        <button className="button button-secondary" onClick={() => setViewingNotes(true)}>{t('viewSideBySideButton')}</button>
+                    )}
+                    {insight.status === 'new' && (
+                        <>
+                            <button className="button keep-btn" onClick={() => onUpdate(insight.id, 'kept')}>{t('keepButton')}</button>
+                            <button className="button dismiss-btn" onClick={() => onUpdate(insight.id, 'dismissed')}>{t('dismissButton')}</button>
+                        </>
+                    )}
+                    {insight.agenticTranscript && (
+                        <button className="thinking-process-toggle" onClick={() => setIsThinkingVisible(!isThinkingVisible)}>
+                            {isThinkingVisible ? t('hideThinkingProcess') : t('showThinkingProcess')}
+                        </button>
+                    )}
+                </div>
+                {isThinkingVisible && insight.agenticTranscript && (
+                    <div className="insight-thinking-process">
+                        <h4>{t('cognitiveScaffoldingProcessTitle')}</h4>
+                        <pre style={{ whiteSpace: 'pre-wrap' }}>{insight.agenticTranscript}</pre>
+                    </div>
+                )}
+                {viewingNotes && newNote && oldNote && (
+                    <SideBySideViewer note1={newNote} note2={oldNote} onClose={() => setViewingNotes(false)} />
+                )}
+            </div>
+        );
+    }
 
+    // Rich rendering path
     const { thinkingProcess, eurekaMarkers } = insight;
 
-    const evidenceByNote = insight.evidenceRefs.reduce((acc, ref) => {
+    const evidenceByNote = (insight.evidenceRefs || []).reduce((acc, ref) => {
         const note = notes.find(n => n.id === ref.noteId);
         const title = note?.title || 'Unknown Note';
-        if (!acc[title]) acc[title] = [];
+        if (!acc[title]) acc[title] = [] as string[];
         acc[title].push(ref.quote);
         return acc;
     }, {} as Record<string, string[]>);
 
-
     return (
         <div className={`insight-card ${insight.status === 'kept' ? 'kept' : ''}`}>
-             <div className="insight-card-header">{insight.mode.toUpperCase()}</div>
-             
-             <div className="insight-suggestion">
+            <div className="insight-card-header">{String(insight.mode).toUpperCase()}</div>
+
+            <div className="insight-suggestion">
                 <strong>{t('insightCoreLabel')}</strong>
                 <blockquote>{insight.insightCore}</blockquote>
-             </div>
-
-             <div className="insight-connection-group">
-                 <div className="insight-connection">
-                    <span>{t('newNoteLabel')}</span>
-                    <p>{newNote.title}</p>
-                 </div>
-                 <div className="insight-connection">
-                    <span>{t('connectedToLabel')}</span>
-                    <p>{oldNote.title}</p>
-                 </div>
             </div>
-            
+
+            {newNote && oldNote && (
+                <div className="insight-connection-group">
+                    <div className="insight-connection">
+                        <span>{t('newNoteLabel')}</span>
+                        <p>{newNote.title}</p>
+                    </div>
+                    <div className="insight-connection">
+                        <span>{t('connectedToLabel')}</span>
+                        <p>{oldNote.title}</p>
+                    </div>
+                </div>
+            )}
+
             <div className="structural-details-grid">
-                <DetailSection title={t('reframedProblemLabel')} className="full-width">
-                    <p>{insight.reframedProblem}</p>
-                </DetailSection>
-                
-                <div className="full-width">
-                    <DetailSection title={t('selectedHypothesisLabel')}>
-                        <HypothesisCard hypothesis={selectedHypothesis} />
+                {insight.reframedProblem && (
+                    <DetailSection title={t('reframedProblemLabel')} className="full-width">
+                        <p>{insight.reframedProblem}</p>
                     </DetailSection>
+                )}
+
+                <div className="full-width">
+                    {selectedHypothesis && (
+                        <DetailSection title={t('selectedHypothesisLabel')}>
+                            <HypothesisCard hypothesis={selectedHypothesis} />
+                        </DetailSection>
+                    )}
                 </div>
 
-                <DetailSection title={t('eurekaMarkersLabel')}>
-                    <div className="eureka-markers-container">
-                        <EurekaMarker label={t('convictionLabel')} value={eurekaMarkers.conviction} />
-                        <EurekaMarker label={t('fluencyLabel')} value={eurekaMarkers.fluency} />
-                        <EurekaMarker label={t('surpriseLabel')} value={insight.bayesianSurprise} />
-                    </div>
-                </DetailSection>
+                {eurekaMarkers && (
+                    <DetailSection title={t('eurekaMarkersLabel')}>
+                        <div className="eureka-markers-container">
+                            <EurekaMarker label={t('convictionLabel')} value={eurekaMarkers.conviction} />
+                            <EurekaMarker label={t('fluencyLabel')} value={eurekaMarkers.fluency} />
+                            <EurekaMarker label={t('surpriseLabel')} value={insight.bayesianSurprise || 0} />
+                        </div>
+                    </DetailSection>
+                )}
             </div>
-
 
             {insight.evidenceRefs && insight.evidenceRefs.length > 0 && (
                 <div className="insight-evidence">
@@ -128,9 +196,10 @@ export const InsightCard: React.FC<{ insight: Insight; notes: Note[]; onUpdate: 
                 </div>
             )}
 
-
-             <div className="insight-actions">
-                <button className="button button-secondary" onClick={() => setViewingNotes(true)}>{t('viewSideBySideButton')}</button>
+            <div className="insight-actions">
+                {newNote && oldNote && (
+                    <button className="button button-secondary" onClick={() => setViewingNotes(true)}>{t('viewSideBySideButton')}</button>
+                )}
                 {insight.status === 'new' && (
                     <>
                         <button className="button keep-btn" onClick={() => onUpdate(insight.id, 'kept')}>{t('keepButton')}</button>
@@ -139,11 +208,11 @@ export const InsightCard: React.FC<{ insight: Insight; notes: Note[]; onUpdate: 
                 )}
                 {thinkingProcess && (
                     <button className="thinking-process-toggle" onClick={() => setIsThinkingVisible(!isThinkingVisible)}>
-                       {isThinkingVisible ? t('hideThinkingProcess') : t('showThinkingProcess')}
+                        {isThinkingVisible ? t('hideThinkingProcess') : t('showThinkingProcess')}
                     </button>
                 )}
-             </div>
-             {isThinkingVisible && thinkingProcess && (
+            </div>
+            {isThinkingVisible && thinkingProcess && (
                 <div className="insight-thinking-process">
                     <h4>{t('cognitiveScaffoldingProcessTitle')}</h4>
                     <div className="thinking-step">
@@ -166,8 +235,10 @@ export const InsightCard: React.FC<{ insight: Insight; notes: Note[]; onUpdate: 
                         <p><i>{thinkingProcess.rankingRationale || 'Top candidates were selected and sent for deep, structured analysis.'}</i></p>
                     </div>
                 </div>
-             )}
-             {viewingNotes && <SideBySideViewer note1={newNote} note2={oldNote} onClose={() => setViewingNotes(false)} />}
+            )}
+            {viewingNotes && newNote && oldNote && (
+                <SideBySideViewer note1={newNote} note2={oldNote} onClose={() => setViewingNotes(false)} />
+            )}
         </div>
     );
 }

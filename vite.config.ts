@@ -3,11 +3,14 @@ import { defineConfig, loadEnv } from 'vite';
 import { resolve } from 'path';
 
 export default defineConfig(({ mode }) => {
+    // Load from .env files and also fall back to real process.env for dev
     const env = loadEnv(mode, '.', '');
+    const GOOGLE = env.GOOGLE_API_KEY || env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || '';
     return {
       define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY || process.env.GEMINI_API_KEY || ''),
+        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || process.env.GEMINI_API_KEY || ''),
+        'process.env.GOOGLE_API_KEY': JSON.stringify(GOOGLE)
       },
       resolve: {
         alias: {
@@ -27,7 +30,7 @@ export default defineConfig(({ mode }) => {
           '/api': {
             target: 'http://127.0.0.1:8000',
             changeOrigin: true,
-            rewrite: (path) => path.replace(/^\/api/, ''),
+            // Do not rewrite; keep '/api' so FastAPI sees correct prefix
           },
         },
       },

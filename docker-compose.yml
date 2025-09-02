@@ -1,0 +1,30 @@
+services:
+  synapse:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Optional: switch to Postgres by setting DATABASE_URL
+      # DATABASE_URL: postgresql+asyncpg://user:pass@host:5432/dbname
+      # Frontend uses same-origin; GEMINI key is NOT required at build time
+      # Provide LLM/search keys to backend tools if needed at runtime
+      # Prefer GOOGLE_API_KEY in backend; keep GEMINI_API_KEY for compatibility
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
+      VERCEL_AI_GATEWAY_TOKEN: ${VERCEL_AI_GATEWAY_TOKEN:-}
+      VERCEL_AI_GATEWAY_URL: ${VERCEL_AI_GATEWAY_URL:-}
+      # Persist DB and vector index under /app/data
+      DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:///data/synapse.db}
+      SYNAPSE_DATA_DIR: ${SYNAPSE_DATA_DIR:-/app/data}
+      # Filesync folders inside container (bind to host below)
+      NOTES_DIR: /app/vault
+      INSIGHTS_DIR: /app/insights_out
+    volumes:
+      - synapse_data:/app/data
+      # Bind host folders for notes and insights (customize paths via env or edit here)
+      - ${HOST_NOTES_DIR:-./vault}:/app/vault
+      - ${HOST_INSIGHTS_DIR:-./insights_out}:/app/insights_out
+
+volumes:
+  synapse_data: {}

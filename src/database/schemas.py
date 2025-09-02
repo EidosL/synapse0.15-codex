@@ -1,6 +1,7 @@
 import uuid
 import datetime
 from pydantic import BaseModel
+from typing import Any, List, Optional
 
 # Schema for creating a note (request)
 class NoteCreate(BaseModel):
@@ -57,3 +58,27 @@ class Note(BaseModel):
     model_config = {
         "from_attributes": True,
     }
+
+
+# --- Insight Schemas ---
+
+class InsightCreate(BaseModel):
+    new_note_id: uuid.UUID
+    old_note_id: Optional[str] = None
+    status: str = "new"
+    payload: dict[str, Any]
+
+class InsightUpdate(BaseModel):
+    status: Optional[str] = None
+    payload: Optional[dict[str, Any]] = None
+
+class Insight(BaseModel):
+    id: uuid.UUID
+    new_note_id: uuid.UUID
+    old_note_id: Optional[str] = None
+    status: str
+    payload: dict[str, Any]
+    created_at: datetime.datetime
+    updated_at: datetime.datetime | None = None
+
+    model_config = {"from_attributes": True}

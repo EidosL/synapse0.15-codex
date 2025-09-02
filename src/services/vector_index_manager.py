@@ -10,9 +10,11 @@ class VectorIndexManager:
     Manages a FAISS index for vector search, including thread-safe operations
     and persistence.
     """
-    def __init__(self, index_path="faiss_index.bin", mapping_path="id_mapping.json", dimension=384):
-        self.index_path = index_path
-        self.mapping_path = mapping_path
+    def __init__(self, index_path: str | None = None, mapping_path: str | None = None, dimension: int = 768):
+        data_dir = os.getenv("SYNAPSE_DATA_DIR", ".")
+        # Allow overriding via env, else place alongside DB in data dir
+        self.index_path = index_path or os.getenv("VECTOR_INDEX_PATH", os.path.join(data_dir, "faiss_index.bin"))
+        self.mapping_path = mapping_path or os.getenv("VECTOR_ID_MAPPING_PATH", os.path.join(data_dir, "id_mapping.json"))
         self.dimension = dimension
         self._lock = asyncio.Lock()
 
@@ -26,6 +28,11 @@ class VectorIndexManager:
         print("Loading FAISS index and ID mapping...")
         if os.path.exists(self.index_path) and os.path.exists(self.mapping_path):
             self.index = faiss.read_index(self.index_path)
+            try:
+                # Align configured dimension with loaded index
+                self.dimension = getattr(self.index, 'd', self.dimension)
+            except Exception:
+                pass
             with open(self.mapping_path, 'r') as f:
                 self.faiss_id_to_db_id = json.load(f)
             print(f"Loaded index with {self.index.ntotal} vectors.")

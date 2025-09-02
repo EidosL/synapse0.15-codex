@@ -20,6 +20,7 @@ export interface JobView {
   result?: { version: string; insights: Insight[] } | null;
   error?: { code: string; message: string } | null;
   trace_id: string;
+  log?: string;
 }
 
 export async function startInsights(payload: any): Promise<{job_id:string; trace_id:string}> {
@@ -33,14 +34,15 @@ export async function startInsights(payload: any): Promise<{job_id:string; trace
 }
 
 export async function getStatus(jobId: string): Promise<JobView> {
-  const res = await fetch(`/api/insights-status/${jobId}`, { method: "GET" });
+  // Align with backend routes under /api/jobs/{job_id}
+  const res = await fetch(`/api/jobs/${jobId}`, { method: "GET" });
   if (res.status === 410) throw new Error("JOB_EXPIRED");
   if (!res.ok) throw new Error(`getStatus failed: ${res.status}`);
   return res.json();
 }
 
 export async function cancelJob(jobId: string): Promise<JobView> {
-  const res = await fetch(`/api/insights-status/${jobId}/cancel`, { method: "POST" });
+  const res = await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
   if (!res.ok) throw new Error(`cancelJob failed: ${res.status}`);
   return res.json();
 }

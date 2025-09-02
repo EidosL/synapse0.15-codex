@@ -9,7 +9,7 @@ async def run_self_evolution(final_draft: str) -> str:
     """
     Refines an insight by generating variants, evaluating them, and merging the best ones.
     """
-    API_KEY = os.getenv("GOOGLE_API_KEY")
+    API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not API_KEY:
         return final_draft
     genai.configure(api_key=API_KEY)
@@ -43,11 +43,14 @@ Return ONLY the refined draft text."""
         return final_draft
 
     # === 2. Evaluation ===
+    variants_block = "\n\n".join([
+        f"Insight Variant #{i + 1}:\n\"\"\"\n{v}\n\"\"\"" for i, v in enumerate(variants)
+    ])
     eval_prompt = f"""You are an evaluator. You will be given multiple proposed insights. Score each from 1 to 10 on overall quality (is it convincing, well-supported, novel, and clear?). Also, provide brief feedback on its strengths or weaknesses.
 
-{chr(10).join([f'Insight Variant #{i + 1}:{chr(10)}"""{v}"""' for i, v in enumerate(variants)])}
+{variants_block}
 
-Respond with ONLY a valid JSON list of objects, like this: [{{"variant": 1, "score": 8, "feedback": "..."}}]."""
+Respond with ONLY a valid JSON list of objects, like this: {{"variant": 1, "score": 8, "feedback": "..."}}]."""
 
     evaluations = []
     try:

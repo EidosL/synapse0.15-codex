@@ -5,9 +5,9 @@ import { LanguageProvider } from './src/context/LanguageProvider';
 import { useStore } from './src/lib/store';
 
 const AppInitializer: React.FC = () => {
-    const hasHydrated = useStore(state => state._hasHydrated);
+    const isInitialized = useStore(state => state.isInitialized);
 
-    if (!hasHydrated) {
+    if (!isInitialized) {
         // You can render a loading spinner or any placeholder here
         return <p>Loading...</p>;
     }

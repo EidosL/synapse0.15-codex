@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from . import models, schemas
+from typing import List, Optional
 
 async def get_note(db: AsyncSession, note_id: uuid.UUID):
     query = (
@@ -100,3 +101,41 @@ async def get_note_ids_for_chunk_ids(db: AsyncSession, chunk_ids: list[uuid.UUID
         .where(models.Chunk.id.in_(chunk_ids))
     )
     return {chunk_id: note_id for chunk_id, note_id in result}
+
+
+# --- Insight CRUD ---
+
+async def list_insights(db: AsyncSession, new_note_id: Optional[uuid.UUID] = None) -> List[models.Insight]:
+    q = select(models.Insight)
+    if new_note_id:
+        q = q.filter(models.Insight.new_note_id == new_note_id)
+    res = await db.execute(q)
+    return res.scalars().all()
+
+async def create_insights_bulk(db: AsyncSession, items: List[schemas.InsightCreate]) -> List[models.Insight]:
+    records: List[models.Insight] = []
+    for item in items:
+        rec = models.Insight(
+            new_note_id=item.new_note_id,
+            old_note_id=item.old_note_id,
+            status=item.status or "new",
+            payload=item.payload,
+        )
+        db.add(rec)
+        records.append(rec)
+    await db.flush()
+    for r in records:
+        await db.refresh(r)
+    return records
+
+async def update_insight(db: AsyncSession, insight_id: uuid.UUID, update: schemas.InsightUpdate) -> Optional[models.Insight]:
+    res = await db.execute(select(models.Insight).filter(models.Insight.id == insight_id))
+    rec = res.scalars().first()
+    if not rec:
+        return None
+    data = update.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        setattr(rec, k, v)
+    await db.flush()
+    await db.refresh(rec)
+    return rec

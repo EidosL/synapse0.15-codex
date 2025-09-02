@@ -7,6 +7,10 @@ from synapse.yaotong.tooling.base import LocalTool, MCPTool, ToolHandle
 from synapse.yaotong.mcp.client_manager import MCPClientManager
 from synapse.yaotong.tools.local_retrieval import retrieve_tool
 from synapse.yaotong.tools.local_fusion import fusion_compose_tool
+from synapse.yaotong.insight import InsightGenerator
+from synapse.yaotong.graph import KnowledgeGraphBuilder
+from synapse.yaotong.models.note import Note
+from synapse.yaotong.note_store import NoteStore
 
 class WorkingMemory(dict):
     def snapshot(self) -> Dict[str, Any]:
@@ -45,6 +49,9 @@ class YaoTong:
         self.memory_store = memory_store or LongTermMemory()
         self.wm: WorkingMemory = WorkingMemory()
         self.tools: Dict[str, ToolHandle] = {}
+        self._insight = InsightGenerator()
+        self._kg = KnowledgeGraphBuilder()
+        self._store = NoteStore()
 
     async def _resolve_tool(self, logical: str, default_local_fn) -> None:
         cfg: ProviderCfg = self.recipe.providers.get(logical, ProviderCfg(type="local"))
@@ -68,18 +75,35 @@ class YaoTong:
         context = self.memory_store.load_context(goal)
         if context:
             self.wm["context"] = context
-        # phase 1: retrieval (mocked local tool by default)
-        out = await self.tools["retrieve"].call({"query": goal, "top_k": 10})
+        # phase 1: retrieval (respect recipe limits/depth)
+        top_k = max(1, int(self.recipe.notes_limit))
+        depth = max(1, int(self.recipe.explore_depth))
+        out = await self.tools["retrieve"].call({"query": goal, "top_k": top_k, "depth": depth})
         self.wm["hits"] = out.get("hits", [])
-        # phase 2: (placeholder) hypotheses
-        hyps = [{
-            "id": "h1",
-            "statement": f"Integrate key ideas about: {goal}",
-            "facets": ["f1","f2"], "conflicts": [],
-            "supportScore": 0.8, "noveltyScore": 0.5, "coherenceScore": 0.7
-        }]
-        # phase 3: fusion compose
-        pills = await self.tools["fusion_compose"].call({"hypotheses": hyps})
-        self.wm["pills"] = pills.get("pills", [])
+
+        # materialize Note objects; prefer real DB fetch via NoteStore
+        note_ids = [str(h.get("note_id", "")) for h in self.wm["hits"] if h.get("note_id")]
+        notes: List[Note] = await self._store.get_notes_by_ids(note_ids) if note_ids else []
+        # if store returned empty (e.g., DB unavailable), fallback to placeholders
+        if not notes and note_ids:
+            notes = [
+                Note(id=nid, title=f"Note {nid}", content=f"Retrieved hit {nid} for goal: {goal}")
+                for nid in note_ids
+            ]
+
+        # optional: build knowledge graph per recipe
+        graph = None
+        if self.recipe.use_graph:
+            graph = self._kg.build(notes)
+            self.wm["graph"] = graph
+
+        # phase 2: insight generation via class-based generator (replaces direct fusion tool call)
+        generated = await self._insight.generate(notes, self.recipe)
+        self.wm["pills"] = [g.model_dump() for g in generated]
         self.memory_store.save_pill(goal, self.wm["pills"])
-        return {"goal": goal, "pills": self.wm["pills"], "context": self.wm.get("context", []), "trace": {"hits": self.wm["hits"]}}
+        return {
+            "goal": goal,
+            "pills": self.wm["pills"],
+            "context": self.wm.get("context", []),
+            "trace": {"hits": self.wm["hits"], **({"graph": graph} if graph else {})},
+        }

@@ -64,27 +64,33 @@ export interface SerendipityInfo {
 export interface Insight {
     id:string;
     newNoteId: string;
-    oldNoteId: string;
+    oldNoteId?: string; // May be absent in minimal backend results
     status: 'new' | 'kept' | 'dismissed';
     createdAt: string;
     thinkingProcess?: InsightThinkingProcess;
-    
-    // --- New structure from the paper ---
-    mode: "eureka" | "serendipity" | "none";
-    reframedProblem: string;
-    insightCore: string;
-    selectedHypothesisName: string;
-    hypotheses: Hypothesis[];
-    eurekaMarkers: EurekaMarkers;
-    bayesianSurprise: number;
-    evidenceRefs: { noteId: string; childId: string; quote: string }[];
+
+    // --- Rich structure from the paper (optional for compatibility) ---
+    mode?: "eureka" | "serendipity" | "none";
+    reframedProblem?: string;
+    insightCore?: string;
+    selectedHypothesisName?: string;
+    hypotheses?: Hypothesis[];
+    eurekaMarkers?: EurekaMarkers;
+    bayesianSurprise?: number;
+    evidenceRefs?: { noteId: string; childId: string; quote: string }[];
     serendipity?: SerendipityInfo;
-    test: string;
-    risks: string[];
+    test?: string;
+    risks?: string[];
+
+    // --- Backend v2 minimal fields ---
+    title?: string;
+    snippet?: string;
+    agenticTranscript?: string;
+    verification?: any;
 
     // --- Derived & Deprecated fields ---
     confidence?: number; // Kept for sorting, derived from eurekaMarkers.conviction
-    
+
     // Deprecated fields for backward compatibility.
     // They will not be populated by the new generation logic.
     connectionType?: string;

@@ -32,7 +32,7 @@ async def counter_insight_check(
     """
     Adversarially checks an insight against its evidence to find contradictions.
     """
-    API_KEY = os.getenv("GOOGLE_API_KEY")
+    API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not API_KEY:
         return None
 

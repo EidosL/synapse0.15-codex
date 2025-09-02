@@ -40,3 +40,84 @@ async def generate_text(model: str, prompt: str) -> str:
         m = genai.GenerativeModel(model)
         resp = await m.generate_content_async(prompt)
         return getattr(resp, "text", str(resp))
+
+def _extract_embedding_from_response_old(resp: Any) -> list[float]:
+    """google-generativeai embed_content returns either a list or a dict.
+    Normalize to a plain list[float]."""
+    try:
+        emb = resp.get("embedding") if isinstance(resp, dict) else getattr(resp, "embedding", None)
+        if emb is None:
+            return []
+        if isinstance(emb, list):
+            return [float(x) for x in emb]
+        if isinstance(emb, dict):
+            vals = emb.get("values") or emb.get("value")
+            if isinstance(vals, list):
+                return [float(x) for x in vals]
+        # Fallback: try to treat as sequence
+        return list(emb) if emb is not None else []
+    except Exception:
+        return []
+
+async def embed_texts(model: str, texts: list[str]) -> list[list[float]]:
+    """Return embeddings for a list of texts using Google GenAI SDK.
+
+    Uses the installed SDK variant (old google-generativeai or new google-genai).
+    """
+    if _MODE == "new":
+        client = get_client()
+        # The new SDK exposes embeddings via client.models.embed_content(s)
+        # Fall back to per-item calls to maximize compatibility.
+        out: list[list[float]] = []
+        for t in texts:
+            resp = await client.models.embed_content(model=model, content=t)
+            # The new SDK returns an Embedding object; try to normalize
+            vec = getattr(resp, "embedding", None)
+            values = getattr(vec, "values", None) if vec is not None else None
+            out.append(list(values) if values is not None else [])
+        return out
+    else:
+        # Old SDK: google.generativeai
+        # Provide simple sequential calls to avoid rate-limit spikes
+        get_client()  # ensures configure(api_key=...)
+        import google.generativeai as genai  # type: ignore
+        out: list[list[float]] = []
+        for t in texts:
+            try:
+                resp = genai.embed_content(model=model, content=t)
+                out.append(_extract_embedding_from_response_old(resp))
+            except Exception:
+                out.append([])
+        return out
+
+def embed_texts_sync(model: str, texts: list[str]) -> list[list[float]]:
+    """Synchronous embeddings helper (preferable in sync code paths)."""
+    if _MODE == "new":
+        client = get_client()
+        out: list[list[float]] = []
+        for t in texts:
+            try:
+                resp = client.models.embed_content(model=model, content=t)
+                emb = getattr(resp, "embedding", None)
+                if emb is None and isinstance(resp, dict):
+                    emb = resp.get("embedding")
+                if hasattr(emb, "values"):
+                    out.append([float(x) for x in getattr(emb, "values")])
+                elif isinstance(emb, list):
+                    out.append([float(x) for x in emb])
+                else:
+                    out.append([])
+            except Exception:
+                out.append([])
+        return out
+    else:
+        get_client()
+        import google.generativeai as genai  # type: ignore
+        out: list[list[float]] = []
+        for t in texts:
+            try:
+                resp = genai.embed_content(model=model, content=t)
+                out.append(_extract_embedding_from_response_old(resp))
+            except Exception:
+                out.append([])
+        return out

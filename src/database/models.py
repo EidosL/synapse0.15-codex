@@ -45,3 +45,21 @@ class Embedding(Base):
 
     def __repr__(self):
         return f"<Embedding(id={self.id}, chunk_id='{self.chunk_id}')>"
+
+
+class Insight(Base):
+    __tablename__ = "insights"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    new_note_id = Column(UUID(as_uuid=True), ForeignKey("notes.id"), nullable=False)
+    # We allow arbitrary identifiers for the related/old note (may be external), so keep it flexible
+    old_note_id = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="new")
+    payload = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    note = relationship("Note")
+
+    def __repr__(self):
+        return f"<Insight(id={self.id}, new_note_id='{self.new_note_id}', status='{self.status}')>"

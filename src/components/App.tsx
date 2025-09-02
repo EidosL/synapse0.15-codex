@@ -1,14 +1,16 @@
-import React, { useRef, useCallback, useEffect } from 'react';
+import React, { useRef, useCallback, useEffect, useState } from 'react';
 import { useStore } from '../lib/store';
 import { useLogStore } from '../lib/logStore';
 
 import { NoteEditor } from './NoteEditor';
 import { NoteViewer } from './NoteViewer';
 import { ThinkingIndicator } from './ThinkingIndicator';
+import { ThinkingStatus } from './ThinkingStatus';
 import { useTranslation } from '../context/LanguageProvider';
 import { Vault } from './Vault';
 import { Inbox } from './Inbox';
-import { ai } from '../lib/ai';
+import { ai } from '../lib/ai-lite';
+import { SettingsModal } from './SettingsModal';
 
 export const App: React.FC = () => {
     const {
@@ -59,6 +61,19 @@ export const App: React.FC = () => {
         }
     }, [handleBulkUpload]);
 
+    const [backendReady, setBackendReady] = useState<boolean>(false);
+    const [showSettings, setShowSettings] = useState<boolean>(false);
+    useEffect(() => {
+        // Probe backend health to decide whether to show API key warning
+        fetch('/api/health').then(async (r) => {
+            if (!r.ok) return;
+            const h = await r.json();
+            if (h && (h.llmConfigured || h.serpapiConfigured)) {
+                setBackendReady(true);
+            }
+        }).catch(() => {});
+    }, []);
+
     return (
         <>
             <input
@@ -81,6 +96,7 @@ export const App: React.FC = () => {
                         {t('inboxTab')}
                         {newInsightCount > 0 && <span className="notification-badge">{newInsightCount}</span>}
                     </button>
+                    <button className="tab-button" onClick={() => setShowSettings(true)} style={{marginLeft: 8}}>设置</button>
                 </nav>
             </header>
             <main>
@@ -90,11 +106,15 @@ export const App: React.FC = () => {
 
             {editingNote && <NoteEditor note={editingNote} onClose={() => setEditingNote(null)} />}
             {viewingNote && <NoteViewer note={viewingNote} onClose={() => setViewingNote(null)} />}
-            {isFindingLinks && <ThinkingStatus job={activeJob} legacySteps={thinkingSteps} />}
+            {(isFindingLinks || !!activeJob) && (
+                <ThinkingStatus job={activeJob} legacySteps={thinkingSteps} />
+            )}
 
-            {!ai && <div style={{position: 'fixed', bottom: 0, left:0, right: 0, background: 'var(--danger-color)', padding: '1rem', textAlign: 'center', color: 'white', zIndex: 2000}}>
+            {!ai && !backendReady && <div style={{position: 'fixed', bottom: 0, left:0, right: 0, background: 'var(--danger-color)', padding: '1rem', textAlign: 'center', color: 'white', zIndex: 2000}}>
                 {t('apiKeyWarning')}
             </div>}
+
+            {showSettings && <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />}
         </>
     );
 };

@@ -1,30 +1,27 @@
 from typing import List
 from .models import Chunk
-from sentence_transformers import SentenceTransformer
+from src.util.genai_compat import embed_texts_sync
+
 
 class Embedder:
-    def __init__(self, model_name: str = 'all-MiniLM-L6-v2'):
+    def __init__(self, model_name: str = 'text-embedding-004'):
         """
-        Initializes the embedder with a pre-trained sentence-transformer model.
+        Cloud-based embedder using Google embeddings.
         """
-        # To prevent a warning about thread-local storage.
-        # See: https://github.com/huggingface/transformers/issues/18480
-        import os
-        os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-        self.model = SentenceTransformer(model_name)
+        self.model_name = model_name
 
     def embed_chunks(self, chunks: List[Chunk]) -> List[Chunk]:
         """
-        Generates embeddings for a list of chunks and adds them to the chunk objects.
+        Generates embeddings for a list of chunks via Google Embeddings API.
         """
         if not chunks:
             return []
 
         texts_to_embed = [chunk.text for chunk in chunks]
-        embeddings = self.model.encode(texts_to_embed, convert_to_tensor=False)
+
+        embeddings = embed_texts_sync(self.model_name, texts_to_embed)
 
         for i, chunk in enumerate(chunks):
-            chunk.embedding = embeddings[i].tolist() # Store as list of floats
+            chunk.embedding = list(embeddings[i]) if i < len(embeddings) else []
 
         return chunks

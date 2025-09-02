@@ -1,46 +1,94 @@
 from typing import List, Dict
 from .models import Chunk
-from sklearn.cluster import KMeans
 import numpy as np
 
+
 class Clusterer:
-    def __init__(self, n_clusters: int = None, random_state: int = 42):
-        """
-        Initializes the clusterer.
-        n_clusters can be specified, otherwise it will be determined heuristically.
-        """
+    def __init__(self, n_clusters: int = None, random_state: int = 42, max_iter: int = 50):
+        """Lightweight KMeans implementation using NumPy only."""
         self.n_clusters = n_clusters
         self.random_state = random_state
+        self.max_iter = max_iter
+
+    def _init_centroids(self, X: np.ndarray, k: int) -> np.ndarray:
+        rng = np.random.default_rng(self.random_state)
+        idx = rng.choice(len(X), size=k, replace=False)
+        return X[idx].astype(float)
+
+    def _assign(self, X: np.ndarray, centroids: np.ndarray) -> np.ndarray:
+        # Compute squared distances to each centroid
+        dists = ((X[:, None, :] - centroids[None, :, :]) ** 2).sum(axis=2)
+        return np.argmin(dists, axis=1)
+
+    def _update(self, X: np.ndarray, labels: np.ndarray, k: int) -> np.ndarray:
+        new_centroids = []
+        for i in range(k):
+            mask = labels == i
+            if np.any(mask):
+                new_centroids.append(X[mask].mean(axis=0))
+            else:
+                # Reinitialize empty cluster to a random point
+                new_centroids.append(X[np.random.randint(0, len(X))])
+        return np.vstack(new_centroids)
 
     def cluster_chunks(self, chunks: List[Chunk]) -> Dict[str, int]:
-        """
-        Performs KMeans clustering on a list of chunks with embeddings.
-        Returns a dictionary mapping chunk_id to its assigned cluster_id.
-        """
-        if not chunks or not chunks[0].embedding:
+        if not chunks:
             return {}
 
-        embeddings = np.array([chunk.embedding for chunk in chunks])
+        # Filter out chunks with missing/empty embeddings and enforce consistent dimensionality
+        valid: List[Chunk] = []
+        dims: List[int] = []
+        for c in chunks:
+            emb = getattr(c, "embedding", None)
+            if emb is None:
+                continue
+            try:
+                vec = np.asarray(emb, dtype=float).ravel()
+            except Exception:
+                continue
+            if vec.size == 0:
+                continue
+            dims.append(vec.size)
+            c.embedding = vec.tolist()
+            valid.append(c)
 
-        num_chunks = len(chunks)
+        if not valid:
+            return {}
+
+        # Keep only the predominant dimensionality to avoid shape errors
+        if len(set(dims)) > 1:
+            # choose the most common dimension
+            from collections import Counter
+            target_dim, _ = Counter(dims).most_common(1)[0]
+            valid = [c for c in valid if len(c.embedding) == target_dim]
+            if not valid:
+                return {}
+
+        X = np.array([c.embedding for c in valid], dtype=float)
+        num_chunks = len(valid)
+
         if self.n_clusters is None:
-            # Heuristic from the user's document
-            n_clusters = max(5, num_chunks // 20)
-            # Ensure we don't have more clusters than chunks
-            n_clusters = min(n_clusters, num_chunks)
+            k = max(5, num_chunks // 20)
+            k = min(k, num_chunks)
         else:
-            n_clusters = self.n_clusters
+            k = self.n_clusters
 
-        # Ensure we don't request more clusters than distinct points
-        unique_points = np.unique(embeddings, axis=0)
-        n_clusters = min(n_clusters, len(unique_points))
-
-        if n_clusters <= 0:
+        # Unique points guard
+        unique_points = np.unique(X, axis=0)
+        k = min(k, len(unique_points))
+        if k <= 0:
             return {}
 
-        kmeans = KMeans(n_clusters=n_clusters, random_state=self.random_state, n_init='auto')
-        labels = kmeans.fit_predict(embeddings)
+        centroids = self._init_centroids(X, k)
+        labels = None
+        for _ in range(self.max_iter):
+            new_labels = self._assign(X, centroids)
+            if labels is not None and np.array_equal(new_labels, labels):
+                break
+            labels = new_labels
+            centroids = self._update(X, labels, k)
 
-        chunk_to_cluster_map = {chunk.id: int(label) for chunk, label in zip(chunks, labels)}
+        if labels is None:
+            labels = np.zeros(num_chunks, dtype=int)
 
-        return chunk_to_cluster_map
+        return {chunk.id: int(label) for chunk, label in zip(valid, labels)}

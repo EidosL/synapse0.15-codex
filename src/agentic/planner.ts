@@ -1,4 +1,4 @@
-import { ai, MODEL_NAME, safeParseGeminiJson } from '../lib/ai';
+import { ai, MODEL_NAME, safeParseGeminiJson, routeLlmCall } from '../lib/ai';
 import { Type } from '@google/genai';
 import type { PlanJSON } from './types';
 
@@ -25,7 +25,6 @@ export async function planNextStep(
   mindHints: string[],
   temperature = 0.4
 ): Promise<PlanJSON|null> {
-  if (!ai) return null;
   const prompt = `You are a planning agent for deep research. Your goal is to formulate a plan to resolve an insight.
 You can take several steps. Propose ONE step at a time.
 
@@ -44,6 +43,21 @@ MIND_HINTS:
 TRANSCRIPT:
 ${transcript.slice(0, 3000)}`;
 
+  // Prefer Vercel AI Gateway (DeepSeek) if configured; fall back to Gemini JSON schema mode
+  try {
+    const resp = await routeLlmCall('planNextStep', [
+      { role: 'system', content: 'Return strict JSON matching the schema: {"rationale": string, "step": {"action": string, "message": string, "expected": string, "stopWhen"?: string[]}}. No extra text.' },
+      { role: 'user', content: contents }
+    ], { temperature });
+    const choice = resp.choices?.[0]?.message?.content;
+    const text = typeof choice === 'string' ? choice : Array.isArray(choice) ? choice.map(p=> (typeof p === 'string' ? p : (p as any).text || '')).join('') : '';
+    const plan = safeParseGeminiJson<PlanJSON>(text);
+    if (plan) return plan;
+  } catch (e) {
+    // ignore and fall back
+  }
+
+  if (!ai) return null;
   const stream = await ai.models.generateContentStream({
     model: MODEL_NAME,
     contents: [{ role: 'user', parts: [{ text: contents }] }],

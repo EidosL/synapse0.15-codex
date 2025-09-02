@@ -1,24 +1,6 @@
-// =================================================================================
-//
-// AI Orchestrator for Project Synapse
-//
-// This file acts as the central nervous system for all AI-related operations.
-// While the Insight Generator agent (`src/agentic/agenticLoop.ts`) is a key
-// component for deep exploration, this orchestrator manages the end-to-end
-// process of finding connections between notes.
-//
-// The orchestrator is responsible for:
-// 1. Calling the Python backend (`src/eureka_rag`) to perform note clustering
-//    and initial insight synthesis.
-// 2. Invoking the Insight Generator agent to deepen the analysis on promising insights.
-// 3. Managing other post-processing steps like multi-hop searches and self-evolution.
-//
-// If you are debugging the overall "find connections" feature, this file is your
-// starting point.
-//
-// =================================================================================
+
 import OpenAI from 'openai';
-import { GoogleGenAI, Type, Schema } from '@google/genai';
+// Frontend no longer calls Google SDK directly; all LLM/embeddings go via backend
 import type { Dispatch, SetStateAction } from 'react';
 import type { Note, Insight, InsightThinkingProcess, ParentChunk, SearchDepth, Hypothesis, EurekaMarkers, SerendipityInfo } from './types';
 import type { VectorStore } from './vectorStore';
@@ -60,37 +42,78 @@ if (process.env.VERCEL_AI_GATEWAY_TOKEN) {
     console.error('VERCEL_AI_GATEWAY_TOKEN environment variable not set. LLM routing disabled.');
 }
 
-// Google client for embeddings and legacy calls
-let aiInstance: GoogleGenAI | null = null;
-if (process.env.GOOGLE_API_KEY) {
-    aiInstance = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
-} else {
-    console.error("GOOGLE_API_KEY environment variable not set. AI features will be disabled.");
-}
-
-export const ai = aiInstance;
-
-const TASK_MODEL_MAP: Record<string, string> = {
-    semanticChunker: 'groq/meta/llama-3.1-8b',
-    evaluateNovelty: 'groq/meta/llama-3.1-8b',
-    webSearchSummary: 'groq/meta/llama-3.1-8b',
-    generateDivergentQuestion: 'deepseek/deepseek-v3.1-thinking',
-    planNextStep: 'deepseek/deepseek-v3.1-thinking',
-    generateInsight: 'google/gemini-2.5-pro',
-    runSelfEvolution: 'google/gemini-2.5-pro',
-};
+// No direct client; use backend route for LLM & embeddings
+export const ai = null as any;
 
 export async function routeLlmCall(
     taskName: string,
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     options: Partial<OpenAI.Chat.Completions.ChatCompletionCreateParams> = {}
 ) {
-    if (!gateway) throw new Error('LLM gateway not configured');
-    const model = TASK_MODEL_MAP[taskName] ?? 'google/gemini-1.5-flash';
-    return gateway.chat.completions.create(
-        { model, messages, ...options },
-        { headers: { 'x-fallback-models': 'google/gemini-1.5-flash' } }
-    );
+    // Route via backend API to centralize task→model mapping and provider usage
+    const resp = await fetch('/api/llm/route', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskName, messages, options })
+    });
+    if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`LLM route failed: ${resp.status} ${text}`);
+    }
+    return await resp.json();
+}
+
+// Stream tokens from backend SSE and return the final text
+export async function routeLlmStream(
+    taskName: string,
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+    options: Partial<OpenAI.Chat.Completions.ChatCompletionCreateParams> = {},
+    onToken?: (t: string) => void
+): Promise<string> {
+    const resp = await fetch('/api/llm/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskName, messages, options })
+    });
+    if (!resp.ok || !resp.body) {
+        const text = await resp.text().catch(()=> '');
+        throw new Error(`LLM stream failed: ${resp.status} ${text}`);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let finalText = '';
+    for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        // Parse SSE lines
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+            const chunk = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 2);
+            if (!chunk) continue;
+            // Support both comment lines and data lines
+            const lines = chunk.split('\n');
+            for (const ln of lines) {
+                if (ln.startsWith('data:')) {
+                    const payload = ln.slice(5).trim();
+                    try {
+                        const obj = JSON.parse(payload);
+                        if (obj.token) {
+                            finalText += obj.token;
+                            onToken?.(obj.token);
+                        } else if (obj.done) {
+                            if (typeof obj.text === 'string') finalText = obj.text;
+                        }
+                    } catch {
+                        // ignore JSON parse errors for safety
+                    }
+                }
+            }
+        }
+    }
+    return finalText;
 }
 
 export const safeParseGeminiJson = <T,>(text: string): T | null => {
@@ -128,68 +151,41 @@ export const semanticChunker = async (text: string, title: string = '', language
         });
     };
 
-    if (!ai) {
-        const paras = text.split(/\n\s*\n/).filter(p => p.trim().length > 50);
-        return buildStructure(paras.length > 0 ? paras : [text]);
-    }
-
-    let prompt = `You are an expert in semantic text chunking. Your task is to split the following document into a JSON array of semantically coherent chunks. Each chunk should be a self-contained unit of meaning, typically a few paragraphs long. Do not create chunks that are too short. Merge small paragraphs into larger meaningful chunks. Preserve markdown formatting.
+    const prompt = `You are an expert in semantic text chunking. Split the document into a JSON array of coherent chunks. Each chunk should be a few paragraphs, merging short paragraphs, preserving markdown. Return ONLY a JSON array of strings.
 Document Title: ${title}
-Document Content:\n---\n${text.slice(0, 20000)}\n---\nReturn ONLY the JSON array of strings.`;
-
-    // DO NOT add language instructions for JSON-only endpoints. It can corrupt the output.
+Document Content:\n---\n${text.slice(0, 20000)}\n---`;
 
     try {
-        const result = await ai.models.generateContent({
-            model: MODEL_NAME,
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: {
-                responseMimeType: 'application/json',
-                responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
-            }
-        });
-        const response = result.response;
-        const chunks = safeParseGeminiJson<string[]>(response.text());
-        return buildStructure((chunks && chunks.length > 0) ? chunks : [text]);
+        const resp = await routeLlmCall('semanticChunker', [
+            { role: 'system', content: 'Return ONLY a JSON array of strings. No commentary.' },
+            { role: 'user', content: prompt }
+        ], { temperature: 0.2 });
+        const choice = resp?.choices?.[0]?.message?.content ?? '';
+        const chunks = safeParseGeminiJson<string[]>(typeof choice === 'string' ? choice : '');
+        if (chunks && chunks.length > 0) return buildStructure(chunks);
     } catch (error) {
-        console.error("Semantic chunking failed:", error);
-        const paras = text.split(/\n\s*\n/).filter(p => p.trim().length > 50);
-        return buildStructure(paras.length > 0 ? paras : [text]);
+        console.error('Semantic chunking via router failed:', error);
     }
+    const paras = text.split(/\n\s*\n/).filter(p => p.trim().length > 50);
+    return buildStructure(paras.length > 0 ? paras : [text]);
 };
 
 export const generateBatchEmbeddings = async (texts: string[]): Promise<number[][]> => {
-    if (!ai || texts.length === 0) return texts.map(() => []);
-
-    // Gemini API has a limit on requests per minute. Batching is crucial.
-    // It also has a limit on the number of documents per request (e.g., 100).
-    const BATCH_SIZE = 100;
-    const allEmbeddings: number[][] = [];
-
-    for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-        const batchTexts = texts.slice(i, i + BATCH_SIZE);
-        try {
-            const res = await ai.models.embedContents({
-                model: EMBEDDING_MODEL_NAME,
-                contents: batchTexts.map(text => ({ role: 'user', parts: [{ text }] }))
-            });
-            // Ensure the number of embeddings matches the number of texts in the batch
-            if (res.embeddings && res.embeddings.length === batchTexts.length) {
-                allEmbeddings.push(...res.embeddings.map(e => e.values));
-            } else {
-                console.error(`Mismatched embedding count for batch starting at index ${i}.`);
-                // Fill with empty arrays for the failed batch
-                for (let j = 0; j < batchTexts.length; j++) {
-                    allEmbeddings.push([]);
-                }
-            }
-        } catch (error) {
-            console.error(`Error embedding batch starting at index ${i}:`, error);
-            // On error, push empty embeddings for this batch to maintain array length
-            for (let j = 0; j < batchTexts.length; j++) {
-                allEmbeddings.push([]);
-            }
+    if (texts.length === 0) return [];
+    try {
+        const resp = await fetch('/api/llm/embed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: EMBEDDING_MODEL_NAME, texts })
+        });
+        if (!resp.ok) {
+            const t = await resp.text();
+            throw new Error(`embed failed: ${resp.status} ${t}`);
         }
+        const data = await resp.json();
+        return (data?.vectors as number[][]) || texts.map(() => []);
+    } catch (error) {
+        console.error('Embedding via backend failed:', error);
+        return texts.map(() => []);
     }
-    return allEmbeddings;
 };

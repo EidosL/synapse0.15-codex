@@ -4,7 +4,7 @@ import os
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
-import google.generativeai as genai
+from src.synapse.config.llm import llm_json
 from src.eureka_rag.main import run_chunk_pipeline
 from src.eureka_rag.models import ChunkInput
 from src.agentic_py.loop import maybe_auto_deepen
@@ -34,16 +34,18 @@ INSIGHT_SCHEMA = {
 }
 
 async def generate_insight(evidence_chunks: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
-    API_KEY = os.getenv("GOOGLE_API_KEY")
-    if not API_KEY: return None
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-pro')
-    prompt = "You are an Insight Engine... Find a deep, non-obvious connection...\n" + "\n".join([f"[{c['noteId']}::{c.get('childId', '')}] {c['text']}" for c in evidence_chunks])
+    bullets = "\n".join([f"[{c['noteId']}::{c.get('childId', '')}] {c['text']}" for c in evidence_chunks])
+    instr = (
+        "You are an Insight Engine. Using ONLY the provided evidence, return a single JSON object with fields: "
+        "mode,reframedProblem,insightCore,selectedHypothesisName,hypotheses[{name,statement,predictedEvidence,disconfirmers,prior,posterior}],"
+        "eurekaMarkers{suddennessProxy,fluency,conviction,positiveAffect},bayesianSurprise,evidenceRefs[{noteId,childId,quote}],test,risks[]."
+    )
+    prompt = f"{instr}\nEVIDENCE:\n{bullets}"
     try:
-        response = await model.generate_content_async(prompt, generation_config={"response_mime_type": "application/json", "response_schema": INSIGHT_SCHEMA, "temperature": 0.7})
-        return json.loads(response.text)
+        data = await llm_json('generateInsight', prompt, temperature=0.7)
+        return data
     except Exception as e:
-        print(f"Error generating insight: {e}")
+        print(f"Error generating insight via router: {e}")
         return None
 
 async def run_synthesis_and_ranking(source_note: Dict[str, Any], candidate_notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -80,37 +82,19 @@ async def run_synthesis_and_ranking(source_note: Dict[str, Any], candidate_notes
     return ranked[:3]
 
 async def generate_constellation_insight(evidence_chunks: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
-    """
-    Generates a 3-way "constellation" insight.
-    """
-    API_KEY = os.getenv("GOOGLE_API_KEY")
-    if not API_KEY: return None
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-pro')
-
-    prompt = f"""You are a "Constellation" Insight Engine. Your goal is to find a deep, non-obvious connection that **unites all three** of the provided evidence sources.
-Identify a unifying theme, pattern, analogy, or principle. Frame the insight as a "constellation" that reveals how all three are related.
-RULES:
-- You MUST use ONLY the provided evidence chunks.
-- Ground your entire analysis in the provided evidence. Do not invent information.
-- Return ONLY a single, valid JSON object matching the schema.
-
-EVIDENCE CHUNKS (from 3 notes):
----
-{chr(10).join([f"[{c['noteId']}::{c.get('childId', '')}] {c['text']}" for c in evidence_chunks])}
----"""
-
+    """Generates a 3-way constellation insight using the central LLM router."""
+    bullets = "\n".join([f"[{c['noteId']}::{c.get('childId', '')}] {c['text']}" for c in evidence_chunks])
+    instr = (
+        "Return ONLY a JSON object for a constellation insight uniting all three notes. Fields: "
+        "mode,reframedProblem,insightCore,selectedHypothesisName,hypotheses[{name,statement,predictedEvidence,disconfirmers,prior,posterior}],"
+        "eurekaMarkers{suddennessProxy,fluency,conviction,positiveAffect},bayesianSurprise,evidenceRefs[{noteId,childId,quote}],test,risks[]."
+    )
+    prompt = f"{instr}\nEVIDENCE CHUNKS (from 3 notes):\n---\n{bullets}\n---"
     try:
-        response = await model.generate_content_async(
-            prompt,
-            generation_config={
-                "response_mime_type": "application/json",
-                "response_schema": INSIGHT_SCHEMA,
-                "temperature": 0.7
-            }
-        )
-        payload = json.loads(response.text)
-        return payload if payload and payload.get("mode") != "none" else None
+        data = await llm_json('generateInsight', prompt, temperature=0.7)
+        if data and data.get('mode') != 'none':
+            return data
+        return None
     except Exception as e:
         print(f"Error in generate_constellation_insight: {e}")
         return None
@@ -224,9 +208,18 @@ async def run_full_insight_pipeline(inp: PipelineInput, progress: ProgressReport
     top_insight = top_insights_data[0]
     evidence_texts = [ref['quote'] for ref in top_insight.get('evidenceRefs', []) if 'quote' in ref]
 
+    # Stream agentic thoughts via job progress messages
+    def _on_log(msg: str):
+        try:
+            # Schedule without blocking
+            asyncio.create_task(progress.update(Phase.agent_refinement, 75, message=str(msg)))
+        except Exception:
+            pass
+
     refined_transcript = await maybe_auto_deepen(
         tier='pro', topic=source_note.get('title', ''),
-        insight_core=top_insight.get('insightCore', ''), evidence_texts=evidence_texts
+        insight_core=top_insight.get('insightCore', ''), evidence_texts=evidence_texts,
+        hooks={"onLog": _on_log}
     )
 
     if refined_transcript:

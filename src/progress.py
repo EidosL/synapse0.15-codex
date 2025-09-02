@@ -10,7 +10,8 @@ class ProgressReporter:
 
     async def update(self, phase: Phase, pct: int,
                      partial: Optional[List[Insight]] = None,
-                     metrics_delta: Optional[Dict[str, int]] = None):
+                     metrics_delta: Optional[Dict[str, int]] = None,
+                     message: Optional[str] = None):
         if metrics_delta is None:
             metrics_delta = {}
 
@@ -23,7 +24,8 @@ class ProgressReporter:
             phase=phase,
             pct=pct,
             partial=partial,
-            metrics_delta=metrics_delta
+            metrics_delta=metrics_delta,
+            message=message
         )
 
     async def is_cancelled(self) -> bool:

@@ -5,13 +5,20 @@ from typing import List, Optional
 
 from .models import PlanJSON
 
-# It's better to configure the client once at the application's entry point.
-# For now, we'll check for the key here.
-API_KEY = os.getenv("GOOGLE_API_KEY")
-if API_KEY:
-    genai.configure(api_key=API_KEY)
-else:
-    print("Warning: GOOGLE_API_KEY environment variable not set. Planner will not function.")
+def _ensure_configured() -> bool:
+    """Ensure the Google GenAI client is configured with an API key.
+
+    Returns True when configured, False otherwise. We check env at call time
+    so .env loaded later (e.g., by server startup) is respected.
+    """
+    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return False
+    try:
+        genai.configure(api_key=api_key)
+        return True
+    except Exception:
+        return False
 
 # The TS code used 'gemini-2.5-flash', but let's use a more standard and available model
 # for this porting exercise, as specific model versions can change.
@@ -44,7 +51,8 @@ async def plan_next_step(
     """
     Analyzes the transcript and decides on the next step for the agent.
     """
-    if not API_KEY:
+    if not _ensure_configured():
+        # Defer noisy warnings to the caller; silently skip when not configured
         return None
 
     model = genai.GenerativeModel(MODEL_NAME)

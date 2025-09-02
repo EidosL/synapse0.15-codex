@@ -7,7 +7,7 @@ import google.generativeai as genai
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.services.vector_index_manager import vector_index_manager
-from src.services.embedding_service import model as embedding_model # Reuse the loaded model
+from src.util.genai_compat import embed_texts_sync
 from src.database import crud
 
 # --- Query Generation ---
@@ -30,7 +30,7 @@ async def generate_search_queries(note_title: str, note_content: str, max_querie
     """Generates search queries based on a note's content."""
     topic = note_title.strip() or note_content[:120]
     cheap = cheap_expand_queries(topic)
-    API_KEY = os.getenv("GOOGLE_API_KEY")
+    API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not API_KEY: return list(cheap.values())[:max_queries]
     genai.configure(api_key=API_KEY)
     model = genai.GenerativeModel('gemini-1.5-flash')
@@ -62,8 +62,19 @@ async def vector_rank_notes(queries: List[str], db: AsyncSession, exclude_note_i
     """Ranks notes based on vector similarity using the global FAISS index."""
     if not await vector_index_manager.index.ntotal: return []
 
-    query_embeddings = embedding_model.encode(queries, convert_to_tensor=False)
-    avg_query_vector = np.mean(query_embeddings, axis=0).reshape(1, -1)
+    # Use cloud embeddings for queries to match index space
+    query_embeddings = embed_texts_sync('text-embedding-004', queries)
+    # Filter empty/invalid embeddings and enforce consistent dimensionality
+    qv = [np.asarray(e, dtype=float).ravel() for e in query_embeddings if isinstance(e, list) and len(e) > 0]
+    if not qv:
+        return []
+    dims = [v.size for v in qv]
+    from collections import Counter
+    target_dim, _ = Counter(dims).most_common(1)[0]
+    qv = [v for v in qv if v.size == target_dim]
+    if not qv:
+        return []
+    avg_query_vector = np.mean(np.vstack(qv), axis=0).reshape(1, -1)
 
     # Search for similar chunks
     search_results = await vector_index_manager.search(query_vector=avg_query_vector, k=top_k * 2) # Get more to filter

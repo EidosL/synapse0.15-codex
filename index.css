@@ -286,6 +286,9 @@ main {
     flex-grow: 1;
     padding: 1rem;
     cursor: pointer;
+    /* Ensure very long unbroken content (e.g., raw PDF bytes)
+       doesn't push action buttons out of view in flex layout */
+    min-width: 0; /* allow flex item to shrink within container */
 }
 
 .note-card h3 {
@@ -300,6 +303,9 @@ main {
   display: -webkit-box;
   -webkit-line-clamp: 3; /* Allow more lines for summary */
   -webkit-box-orient: vertical;
+  /* Break long tokens like base64/pdf bytes to avoid overflowing */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .note-card .date {

@@ -1,5 +1,5 @@
 import type { PlanStep, ToolResult } from '../types';
-import { ai, MODEL_NAME } from '../../lib/ai';
+import { routeLlmCall } from '../../lib/ai';
 import type { Tool } from './tool';
 
 export class WebSearchTool implements Tool {
@@ -10,16 +10,15 @@ export class WebSearchTool implements Tool {
     const bullets = hits.map(h => `• ${h.title}: ${h.snippet}`).join('\n');
 
     let summary = '';
-    if (ai) {
-      const stream = await ai.models.generateContentStream({
-        model: MODEL_NAME,
-        contents: `Summarize key facts useful for: "${step.expected}". Use only these bullets, no new claims.\n${bullets}`
-      });
-      for await (const chunk of stream) {
-        const text = chunk.text ?? '';
-        summary += text;
-      }
-    } else {
+    try {
+      const resp = await routeLlmCall('webSearchSummary', [
+        { role: 'system', content: 'Summarize key facts. Use only provided bullets. No new claims. Return plain text.' },
+        { role: 'user', content: `Goal: ${step.expected}\nBullets:\n${bullets}` },
+      ]);
+      const choice = resp.choices?.[0]?.message?.content;
+      summary = (typeof choice === 'string') ? choice : '';
+    } catch (e) {
+      console.error('webSearchSummary routing failed, falling back to bullets. Error:', e);
       summary = bullets;
     }
 

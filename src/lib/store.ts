@@ -5,6 +5,11 @@ import type { Note, Insight, SearchDepth } from './types';
 import i18n from '../context/i18n';
 import { useLogStore } from './logStore';
 import * as api from './api';
+import { createInsightsBulk, getAllPersistedInsights, updateInsightStatus as apiUpdateInsightStatus, exportInsightsOnly } from './api/inboxInsights';
+
+// --- Simple client-side persistence keys ---
+const LS_INSIGHTS_KEY = 'synapse.insights.v1';
+const LS_ACTIVE_TAB_KEY = 'synapse.activeTab.v1';
 
 type LoadingState = {
     active: boolean;
@@ -57,13 +62,51 @@ export const useStore = create<AppState>()((set, get) => ({
     initialize: async () => {
         try {
             const notes = await api.getNotes();
-            set({ notes, isInitialized: true });
+            // Try server-side persisted insights first, then fall back to localStorage
+            let persistedInsights: Insight[] = [];
+            try {
+                persistedInsights = await getAllPersistedInsights();
+            } catch {
+                try {
+                    const raw = localStorage.getItem(LS_INSIGHTS_KEY);
+                    if (raw) persistedInsights = JSON.parse(raw);
+                } catch {}
+            }
+
+            let persistedTab: 'vault' | 'inbox' | null = null;
+            try {
+                const rawTab = localStorage.getItem(LS_ACTIVE_TAB_KEY);
+                if (rawTab === 'vault' || rawTab === 'inbox') persistedTab = rawTab;
+            } catch {}
+
+            set({
+                notes,
+                insights: persistedInsights || [],
+                activeTab: persistedTab || 'vault',
+                isInitialized: true,
+            });
         } catch (error) {
             console.error("Failed to load notes from backend:", error);
-            set({ isInitialized: true }); // Mark as initialized even on error to prevent re-fetching
+            // Even on error, attempt to restore local insights and tab so UI is usable
+            let persistedInsights: Insight[] = [];
+            try {
+                const raw = localStorage.getItem(LS_INSIGHTS_KEY);
+                if (raw) persistedInsights = JSON.parse(raw);
+            } catch {}
+
+            let persistedTab: 'vault' | 'inbox' | null = null;
+            try {
+                const rawTab = localStorage.getItem(LS_ACTIVE_TAB_KEY);
+                if (rawTab === 'vault' || rawTab === 'inbox') persistedTab = rawTab;
+            } catch {}
+
+            set({ insights: persistedInsights || [], activeTab: persistedTab || 'vault', isInitialized: true });
         }
     },
-    setActiveTab: (tab) => set({ activeTab: tab }),
+    setActiveTab: (tab) => {
+        try { localStorage.setItem(LS_ACTIVE_TAB_KEY, tab); } catch {}
+        set({ activeTab: tab });
+    },
     setEditingNote: (note) => set({ editingNote: note }),
     setViewingNote: (note) => set({ viewingNote: note }),
     setSearchDepth: (depth) => set({ searchDepth: depth }),
@@ -138,15 +181,27 @@ export const useStore = create<AppState>()((set, get) => ({
             (finalJob) => {
                 set({ activeJob: finalJob, isFindingLinks: null, loadingState: { active: false, messages: [] } });
                 if (finalJob.status === 'SUCCEEDED' && finalJob.result) {
-                    const newInsights: Insight[] = finalJob.result.insights.map((link: any, i: number) => ({
+                    const draftInsights: Insight[] = finalJob.result.insights.map((link: any, i: number) => ({
                         ...link,
                         newNoteId: note.id,
                         oldNoteId: link.oldNoteId || 'unknown',
-                        id: `insight-${Date.now()}-${i}`,
+                        id: `temp-${Date.now()}-${i}`,
                         status: 'new',
                         createdAt: new Date().toISOString()
                     }));
-                    set(state => ({ insights: [...state.insights, ...newInsights], activeTab: 'inbox' }));
+                    (async () => {
+                        try {
+                            const syncOnline = (localStorage.getItem('synapse.syncInsightsOnline') ?? 'true') === 'true';
+                            const saved = syncOnline
+                                ? await createInsightsBulk(note.id, draftInsights)
+                                : await exportInsightsOnly(note.id, draftInsights);
+                            set(state => ({ insights: [...state.insights, ...saved], activeTab: 'inbox' }));
+                        } catch (e) {
+                            console.error('Failed to persist insights; using local state only', e);
+                            set(state => ({ insights: [...state.insights, ...draftInsights], activeTab: 'inbox' }));
+                        }
+                        try { localStorage.setItem(LS_ACTIVE_TAB_KEY, 'inbox'); } catch {}
+                    })();
                 }
             },
             (error) => {
@@ -170,7 +225,8 @@ export const useStore = create<AppState>()((set, get) => ({
         });
 
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', 'http://localhost:8000/api/imports/start', true);
+        // Use same-origin path so Vite dev proxy or production server handles it
+        xhr.open('POST', '/api/imports/start', true);
 
         xhr.upload.onprogress = (event) => {
             if (event.lengthComputable) {
@@ -224,6 +280,9 @@ export const useStore = create<AppState>()((set, get) => ({
         set(state => ({
             insights: state.insights.map(i => i.id === id ? { ...i, status } : i),
         }));
+        (async () => {
+            try { await apiUpdateInsightStatus(id, status); } catch (e) { console.warn('Failed to update insight on server', e); }
+        })();
     },
 }));
 
@@ -233,6 +292,8 @@ useStore.subscribe(
     (insights) => {
         const newInsightCount = insights.filter((i) => i.status === 'new').length;
         useStore.setState({ newInsightCount });
+        // Persist insights so they survive page refreshes
+        try { localStorage.setItem(LS_INSIGHTS_KEY, JSON.stringify(insights)); } catch {}
     }
 );
 
