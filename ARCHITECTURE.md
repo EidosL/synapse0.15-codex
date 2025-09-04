@@ -8,28 +8,28 @@
 graph TB
   %% Frontend
   subgraph "Frontend (React/Vite)"
-    FE_UI[UI 组件&#10;src/components/*];
-    FE_STATE[客户端状态&#10;src/lib/store.ts];
-    FE_API[API 封装&#10;src/lib/api/*];
+    FE_UI[UI 组件 src/components/*];
+    FE_STATE[客户端状态 src/lib/store.ts];
+    FE_API[API 封装 src/lib/api/*];
   end
 
   %% Backend
   subgraph "Backend (FastAPI)"
-    APP[server.py&#10;FastAPI 应用];
-    ROUTERS[/API 路由集合&#10;src/api/*/];
-    JOBS[作业与SSE&#10;/api/jobs/*];
-    PIPE[洞见流水线入口&#10;src/backend_pipeline.py];
-    AS_PIPE[AgentScope 流水线&#10;src/agentscope_app/flow/pipeline.py];
-    LEGACY[Legacy RAG/排序/演化&#10;src/eureka_rag/* + src/backend/*];
-    EMB[Embedding 服务&#10;src/services/embedding_service.py];
-    VI[向量索引管理 (FAISS)&#10;src/services/vector_index_manager.py];
-    FSYNC[文件同步/导出&#10;src/services/filesync.py];
-    LLM[LLM 路由&#10;src/synapse/config/llm.py];
+    APP[server.py FastAPI 应用];
+    ROUTERS[/API 路由集合 src/api/*/];
+    JOBS[作业与SSE /api/jobs/*];
+    PIPE[洞见流水线入口 src/backend_pipeline.py];
+    AS_PIPE[AgentScope 流水线 src/agentscope_app/flow/pipeline.py];
+    LEGACY[Legacy RAG/排序/演化 src/eureka_rag/* + src/backend/*];
+    EMB[Embedding 服务 src/services/embedding_service.py];
+    VI[向量索引管理(FAISS) src/services/vector_index_manager.py];
+    FSYNC[文件同步/导出 src/services/filesync.py];
+    LLM[LLM 路由 src/synapse/config/llm.py];
   end
 
   %% Storage
   subgraph "存储"
-    DB[(SQLite/SQLAlchemy&#10;synapse.db)];
+    DB[(SQLite/SQLAlchemy synapse.db)];
     INDEX[(FAISS 索引 + id_mapping.json)];
     VAULT[(本地笔记目录 vault/)];
     OUT[(洞见导出目录 insights_out/)];
@@ -72,6 +72,7 @@ graph TB
   DB --> DB;
   INDEX --> INDEX;
   AS_PIPE -. 观测 .-> ASCOPE;
+
 
 ```
 
