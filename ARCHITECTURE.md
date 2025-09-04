@@ -8,70 +8,71 @@
 graph TB
   %% Frontend
   subgraph "Frontend (React/Vite)"
-    FE_UI[UI 组件 src/components/*];
-    FE_STATE[客户端状态 src/lib/store.ts];
-    FE_API[API 封装 src/lib/api/*];
+    FE_UI["UI 组件 src/components/*"];
+    FE_STATE["客户端状态 src/lib/store.ts"];
+    FE_API["API 封装 src/lib/api/*"];
   end
 
   %% Backend
   subgraph "Backend (FastAPI)"
-    APP[server.py FastAPI 应用];
-    ROUTERS[/API 路由集合 src/api/*/];
-    JOBS[作业与SSE /api/jobs/*];
-    PIPE[洞见流水线入口 src/backend_pipeline.py];
-    AS_PIPE[AgentScope 流水线 src/agentscope_app/flow/pipeline.py];
-    LEGACY[Legacy RAG/排序/演化 src/eureka_rag/* + src/backend/*];
-    EMB[Embedding 服务 src/services/embedding_service.py];
-    VI[向量索引管理(FAISS) src/services/vector_index_manager.py];
-    FSYNC[文件同步/导出 src/services/filesync.py];
-    LLM[LLM 路由 src/synapse/config/llm.py];
+    APP["server.py FastAPI 应用"];
+    ROUTERS["/API 路由集合 src/api/*/"];
+    JOBS["作业与SSE /api/jobs/*"];
+    PIPE["洞见流水线入口 src/backend_pipeline.py"];
+    AS_PIPE["AgentScope 流水线 src/agentscope_app/flow/pipeline.py"];
+    LEGACY["Legacy RAG/排序/演化 src/eureka_rag/* + src/backend/*"];
+    EMB["Embedding 服务 src/services/embedding_service.py"];
+    VI["向量索引管理 (FAISS) src/services/vector_index_manager.py"];
+    FSYNC["文件同步/导出 src/services/filesync.py"];
+    LLM["LLM 路由 src/synapse/config/llm.py"];
   end
 
   %% Storage
   subgraph "存储"
-    DB[(SQLite/SQLAlchemy synapse.db)];
-    INDEX[(FAISS 索引 + id_mapping.json)];
-    VAULT[(本地笔记目录 vault/)];
-    OUT[(洞见导出目录 insights_out/)];
+    DB["(SQLite/SQLAlchemy) synapse.db"];
+    INDEX["(FAISS 索引 + id_mapping.json)"];
+    VAULT["(本地笔记目录 vault/)"];
+    OUT["(洞见导出目录 insights_out/)"];
   end
 
   %% External
   subgraph "外部服务（可选）"
-    GATEWAY[[Vercel AI Gateway]];
-    GEMINI[[Google GenAI (Gemini)]];
-    HF[[HuggingFace Inference]];
-    SERP[[SerpAPI Web Search]];
-    ASCOPE[[AgentScope Studio/Tracing]];
+    GATEWAY["Vercel AI Gateway"];
+    GEMINI["Google GenAI (Gemini)"];
+    HF["HuggingFace Inference"];
+    SERP["SerpAPI Web Search"];
+    ASCOPE["AgentScope Studio/Tracing"];
   end
 
   %% Edges
-  FE_UI -->|REST + SSE| APP;
-  FE_API -->|/api/*| ROUTERS;
-  APP --> ROUTERS;
-  ROUTERS --> DB;
-  DB --- DB;
-  ROUTERS --> EMB;
-  EMB --> VI;
-  VI --> INDEX;
-  ROUTERS --> JOBS;
-  JOBS -->|/api/jobs/{id}/events| FE_UI;
-  ROUTERS --> LLM;
-  LLM -->|优先| GATEWAY;
-  LLM -->|回退| GEMINI;
-  LLM -->|可选| HF;
-  ROUTERS --> FSYNC;
-  FSYNC --> DB;
-  FSYNC --> EMB;
-  FSYNC --> VAULT;
-  FSYNC --> OUT;
-  ROUTERS --> PIPE;
-  PIPE --> AS_PIPE;
-  PIPE -. 失败回退 .-> LEGACY;
-  AS_PIPE --> LLM;
-  LEGACY --> LLM;
-  DB --> DB;
-  INDEX --> INDEX;
-  AS_PIPE -. 观测 .-> ASCOPE;
+FE_UI -->|REST + SSE| APP;
+FE_API -->|/api/*| ROUTERS;
+APP --> ROUTERS;
+ROUTERS --> DB;
+DB --- DB;
+ROUTERS --> EMB;
+EMB --> VI;
+VI --> INDEX;
+ROUTERS --> JOBS;
+JOBS -->|/api/jobs/&#123;id&#125;/events| FE_UI;
+ROUTERS --> LLM;
+LLM -->|优先| GATEWAY;
+LLM -->|回退| GEMINI;
+LLM -->|可选| HF;
+ROUTERS --> FSYNC;
+FSYNC --> DB;
+FSYNC --> EMB;
+FSYNC --> VAULT;
+FSYNC --> OUT;
+ROUTERS --> PIPE;
+PIPE --> AS_PIPE;
+PIPE -. 失败回退 .-> LEGACY;
+AS_PIPE --> LLM;
+LEGACY --> LLM;
+DB --> DB;
+INDEX --> INDEX;
+AS_PIPE -. 观测 .-> ASCOPE;
+
 
 
 ```
