@@ -7,14 +7,14 @@
 ```mermaid
 graph TB
   %% Frontend
-  subgraph FE[Frontend (React/Vite)]
+  subgraph "Frontend (React/Vite)"
     FE_UI[UI 组件<br/>src/components/*]
     FE_STATE[客户端状态<br/>src/lib/store.ts]
     FE_API[API 封装<br/>src/lib/api/*]
   end
 
   %% Backend
-  subgraph BE[Backend (FastAPI)]
+  subgraph "Backend (FastAPI)"
     APP[server.py<br/>FastAPI 应用]
     ROUTERS[/API 路由集合<br/>src/api/*/]
     JOBS[作业与SSE<br/>/api/jobs/*]
@@ -28,7 +28,7 @@ graph TB
   end
 
   %% Storage
-  subgraph ST[存储]
+  subgraph "存储"
     DB[(SQLite/SQLAlchemy<br/>synapse.db)]
     INDEX[(FAISS 索引 + id_mapping.json)]
     VAULT[(本地笔记目录 vault/)]
@@ -36,7 +36,7 @@ graph TB
   end
 
   %% External
-  subgraph EXT[外部服务（可选）]
+  subgraph "外部服务（可选）"
     GATEWAY[[Vercel AI Gateway]]
     GEMINI[[Google GenAI (Gemini)]]
     HF[[HuggingFace Inference]]
