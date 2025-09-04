@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 from .base import Tool
 from ..models import PlanStep, ToolResult, MindMap
 from ...util.genai_compat import genai
+from src.synapse.config.llm import llm_structured
 
 MAP_SCHEMA = {
     "type": "object", "properties": {
@@ -13,6 +14,37 @@ MAP_SCHEMA = {
         "summaries": {"type": "array", "items": {"type": "string"}},
     }, "required": ["nodes", "edges", "summaries"],
 }
+
+async def _build_mind_map_from_transcript_routed(transcript: str) -> Optional[MindMap]:
+    """Centralized LLM path using route_llm_call/llm_structured with fallback"""
+    # Prefer centralized LLM router with structured output
+    try:
+        sys_msg = {"role": "system", "content": (
+            "Extract a mind map as JSON with nodes(id,label,kind) where kind in [entity,concept,claim], "
+            "edges(s,t,rel), and summaries(string[]). Return ONLY JSON."
+        )}
+        user_msg = {"role": "user", "content": transcript[:6000]}
+        mm = await llm_structured("mindMapExtract", [sys_msg, user_msg], structured_model=MindMap, options={"temperature": 0.2})
+        if mm:
+            return mm
+    except Exception:
+        pass
+
+    # Fallback to legacy Google SDK path if available
+    if not genai:
+        print("GenAI module not available, cannot build mind map.")
+        return None
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = "Extract a MIND MAP from the transcript. Return JSON with nodes (entity|concept|claim), edges (s,t,rel), and short summaries. Be faithful; no hallucinations."
+        response = await model.generate_content_async(
+            f"{prompt}\n---\n{transcript[:6000]}\n---",
+            generation_config={ "response_mime_type": "application/json", "response_schema": MAP_SCHEMA, "temperature": 0.2, },
+        )
+        return MindMap(**json.loads(response.text))
+    except Exception as e:
+        print(f"An error occurred during mind map generation: {e}")
+        return None
 
 async def _build_mind_map_from_transcript(transcript: str) -> Optional[MindMap]:
     if not genai:
@@ -67,7 +99,7 @@ class MindMapTool(Tool):
 
     async def update(self, transcript: str):
         print("--- TOOL: MIND MAP UPDATE ---")
-        mind_map = await _build_mind_map_from_transcript(transcript)
+        mind_map = await _build_mind_map_from_transcript_routed(transcript)
         if mind_map:
             existing_graph = self.graphs.get(self.session_id, {"nodes": [], "edges": [], "summaries": []})
 

@@ -1,0 +1,14 @@
+name: technical_report
+file_types: [pdf, md, docx]
+sections:
+  - Title
+  - Abstract
+  - Problem
+  - Method
+  - Results
+  - Discussion
+  - Conclusion
+  - Key Findings
+hints:
+  summary_style: analytical
+  cite_inline: true

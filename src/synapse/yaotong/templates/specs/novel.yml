@@ -1,0 +1,12 @@
+name: novel
+file_types: [txt, md, epub]
+sections:
+  - Title
+  - Characters
+  - Setting
+  - Plot Summary
+  - Themes
+  - Notable Passages
+hints:
+  summary_style: concise
+  cite_inline: false

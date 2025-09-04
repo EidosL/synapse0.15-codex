@@ -66,3 +66,14 @@ export const deleteNote = async (noteId: NoteId): Promise<Note> => {
         createdAt: new Date(note.created_at).toISOString(),
     };
 };
+
+export const getNote = async (noteId: NoteId): Promise<Note> => {
+    const response = await fetch(`${API_BASE_URL}/api/notes/${noteId}`);
+    const note = await handleResponse(response);
+    return {
+        id: String(note.id),
+        title: String(note.title || ''),
+        content: note.content ?? '',
+        createdAt: new Date(note.created_at).toISOString(),
+    };
+};

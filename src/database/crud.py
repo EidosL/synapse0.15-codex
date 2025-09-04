@@ -103,6 +103,17 @@ async def get_note_ids_for_chunk_ids(db: AsyncSession, chunk_ids: list[uuid.UUID
     return {chunk_id: note_id for chunk_id, note_id in result}
 
 
+async def get_chunk_by_id(db: AsyncSession, chunk_id: uuid.UUID) -> Optional[models.Chunk]:
+    """Fetch a single chunk with its parent note."""
+    query = (
+        select(models.Chunk)
+        .options(selectinload(models.Chunk.note))
+        .filter(models.Chunk.id == chunk_id)
+    )
+    res = await db.execute(query)
+    return res.scalars().first()
+
+
 # --- Insight CRUD ---
 
 async def list_insights(db: AsyncSession, new_note_id: Optional[uuid.UUID] = None) -> List[models.Insight]:

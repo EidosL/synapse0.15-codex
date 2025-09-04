@@ -101,7 +101,7 @@ async def stream_route(req: StreamRouteRequest):
                         if data == "[DONE]":
                             # Send final
                             text = "".join(full_text)
-                            yield f"data: {json.dumps({"done": True, "text": text})}\n\n"
+                            yield "data: " + json.dumps({"done": True, "text": text}) + "\n\n"
                             break
                         try:
                             obj = json.loads(data)
@@ -112,7 +112,7 @@ async def stream_route(req: StreamRouteRequest):
                                 content = delta.get("content")
                                 if content:
                                     full_text.append(content)
-                                    yield f"data: {json.dumps({"token": content})}\n\n"
+                                    yield "data: " + json.dumps({"token": content}) + "\n\n"
                         except Exception:
                             # If a non-JSON event arrives, forward as comment to avoid breaking the stream
                             yield f": {data}\n"
@@ -130,17 +130,17 @@ async def stream_route(req: StreamRouteRequest):
             # Surface the error as an SSE error comment and terminate
             err = f"route_llm_call failed: {e}"
             yield f": {err}\n\n"
-            yield f"data: {json.dumps({"done": True, "text": ""})}\n\n"
+            yield "data: " + json.dumps({"done": True, "text": ""}) + "\n\n"
             return
 
         # Chunk by ~60 chars to feel responsive
         chunk_size = 60
         for i in range(0, len(text), chunk_size):
             piece = text[i:i+chunk_size]
-            yield f"data: {json.dumps({"token": piece})}\n\n"
+            yield "data: " + json.dumps({"token": piece}) + "\n\n"
             # Cooperative yield to the event loop
             # (no sleep to keep latency minimal but allow flush)
-        yield f"data: {json.dumps({"done": True, "text": text})}\n\n"
+        yield "data: " + json.dumps({"done": True, "text": text}) + "\n\n"
 
     # Choose gateway streaming if configured, else fallback
     if token and base_url:

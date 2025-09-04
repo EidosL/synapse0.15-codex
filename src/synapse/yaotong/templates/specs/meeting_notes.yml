@@ -1,0 +1,13 @@
+name: meeting_notes
+file_types: [md, txt]
+sections:
+  - Title
+  - Date
+  - Attendees
+  - Agenda
+  - Discussion Summary
+  - Decisions
+  - Action Items
+hints:
+  summary_style: concise
+  cite_inline: false

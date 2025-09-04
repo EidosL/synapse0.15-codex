@@ -8,19 +8,38 @@ import time
 import asyncio
 from contextlib import asynccontextmanager
 import os
+import sys
 import uuid
 
 # Load environment variables early so downstream modules see them
 try:
     from dotenv import load_dotenv
+    # Load .env first
     load_dotenv()
+    # Then overlay .env.local if present (does not override already-set envs by default)
+    load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env.local"), override=False)
 except Exception:
     pass
+
+# Optionally vendor the bundled AgentScope library for observability/tracing
+def _vendor_agentscope():
+    try:
+        import sys, os
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        vendor_src = os.path.join(repo_root, "agentscope-1.0.1", "src")
+        if os.path.isdir(vendor_src) and vendor_src not in sys.path:
+            sys.path.insert(0, vendor_src)
+    except Exception:
+        pass
+
+_vendor_agentscope()
 
 # Clean imports for the new architecture
 from src.jobs import router as jobs_router, job_store, JobState, JobResult
 from src.progress import ProgressReporter
-from src.backend_pipeline import run_full_insight_pipeline, PipelineInput
+from src import backend_pipeline
+# Back-compat alias for tests that patch server.run_full_insight_pipeline
+run_full_insight_pipeline = backend_pipeline.run_full_insight_pipeline
 from src.database import models, database
 from src.services.vector_index_manager import vector_index_manager
 from src.api import notes as notes_router
@@ -29,6 +48,9 @@ from src.api import imports as imports_router
 from src.api import llm as llm_router
 from src.api import insights_store as insights_router
 from src.api import filesync_routes as filesync_router
+from src.api import yaotong as yaotong_router
+from src.api import chunks as chunks_router
+from src.api import metrics as metrics_router
 from src.services.filesync import import_notes_from_folder, watch_and_import_loop
 
 # --- App Lifecycle ---
@@ -50,6 +72,22 @@ async def lifespan(app: FastAPI):
                 print(f"File import skipped due to error: {e}")
         finally:
             await db.close()
+
+    # Initialize AgentScope (if available and configured)
+    try:
+        import agentscope as ascope  # type: ignore
+        ascope.init(
+            project=os.getenv("AGENTSCOPE_PROJECT", "synapse"),
+            name=os.getenv("AGENTSCOPE_RUN_NAME", None),
+            logging_path=os.getenv("AGENTSCOPE_LOG_FILE", None),
+            logging_level=os.getenv("AGENTSCOPE_LOG_LEVEL", "INFO"),
+            studio_url=os.getenv("AGENTSCOPE_STUDIO_URL", None),
+            tracing_url=os.getenv("AGENTSCOPE_TRACING_URL", None),
+        )
+        app.state._agentscope_enabled = True
+    except Exception as e:
+        # If not installed or not configured, continue silently
+        app.state._agentscope_enabled = False
 
     # Start background watcher to auto-import notes periodically
     import asyncio
@@ -86,6 +124,9 @@ app.include_router(imports_router.router)
 app.include_router(llm_router.router)
 app.include_router(insights_router.router)
 app.include_router(filesync_router.router)
+app.include_router(yaotong_router.router)
+app.include_router(chunks_router.router)
+app.include_router(metrics_router.router)
 
 from src.api.schemas import GenerateInsightsRequest, StartResponse
 
@@ -121,11 +162,13 @@ async def generate_insights(req: GenerateInsightsRequest, tasks: BackgroundTasks
                         raise ValueError("No notes found in the database.")
 
                     # Construct the pipeline input
-                    pipeline_input = PipelineInput(
+                    pipeline_input = backend_pipeline.PipelineInput(
                         source_note_id=str(source_note_id),
                         notes=all_notes
                     )
-                    result: JobResult = await run_full_insight_pipeline(pipeline_input, reporter, db)
+                    # Prefer a possibly monkeypatched alias on this module for tests
+                    func = getattr(sys.modules[__name__], "run_full_insight_pipeline", None) or backend_pipeline.run_full_insight_pipeline
+                    result: JobResult = await func(pipeline_input, reporter, db)
 
                     await job_store.complete(job_id, result)
                 finally:
@@ -148,10 +191,12 @@ async def health():
     llm_configured = bool(os.getenv("VERCEL_AI_GATEWAY_TOKEN") and os.getenv("VERCEL_AI_GATEWAY_URL")) or \
                      bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
     serpapi_configured = bool(os.getenv("SERPAPI_API_KEY"))
+    agentscope_configured = bool(os.getenv("AGENTSCOPE_STUDIO_URL") or os.getenv("AGENTSCOPE_TRACING_URL"))
     return {
         "status": "ok",
         "llmConfigured": llm_configured,
         "serpapiConfigured": serpapi_configured,
+        "agentscopeConfigured": agentscope_configured,
     }
 
 # --- Static Frontend (Production) ---

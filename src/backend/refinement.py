@@ -3,18 +3,12 @@ import json
 import asyncio
 from typing import List, Dict, Any, Optional
 
-import google.generativeai as genai
+from src.synapse.config.llm import llm_text
 
 async def run_self_evolution(final_draft: str) -> str:
     """
     Refines an insight by generating variants, evaluating them, and merging the best ones.
     """
-    API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    if not API_KEY:
-        return final_draft
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-
     # === 1. Variant Generation ===
     focuses = [
         "highlighting technical depth and specific evidence, creating a rigorous, academic tone",
@@ -22,20 +16,19 @@ async def run_self_evolution(final_draft: str) -> str:
         "focusing on practical implications and actionable outcomes, creating a pragmatic, business-oriented tone",
     ]
 
-    variant_tasks = []
-    for focus in focuses:
-        prompt = f"""You are an expert researcher. Your task is to refine the following insight draft with a specific focus.
-Focus: {focus}.
+    async def _gen_variant(focus: str) -> str:
+        prompt = (
+            "You are an expert researcher. Refine the insight draft with a specific focus.\n"
+            f"Focus: {focus}.\n\nDraft:\n'''\n{final_draft}\n'''\n"
+            "Return ONLY the refined draft text."
+        )
+        try:
+            return (await llm_text('runSelfEvolution', prompt, temperature=0.7)).strip()
+        except Exception:
+            return ""
 
-Draft:
-'''
-{final_draft}
-'''
-Return ONLY the refined draft text."""
-        variant_tasks.append(model.generate_content_async(prompt, generation_config={"temperature": 0.7}))
-
-    variant_responses = await asyncio.gather(*variant_tasks, return_exceptions=True)
-    variants = [r.text.strip() for r in variant_responses if not isinstance(r, Exception) and r.text]
+    variant_responses = await asyncio.gather(*[_gen_variant(f) for f in focuses], return_exceptions=False)
+    variants = [v.strip() for v in variant_responses if isinstance(v, str) and v.strip()]
     variants.append(final_draft)
     variants = list(set(v for v in variants if len(v) > 20))
 
@@ -54,9 +47,8 @@ Respond with ONLY a valid JSON list of objects, like this: {{"variant": 1, "scor
 
     evaluations = []
     try:
-        eval_schema = {"type": "array", "items": {"type": "object", "properties": {"variant": {"type": "number"}, "score": {"type": "number"}, "feedback": {"type": "string"}}, "required": ["variant", "score", "feedback"]}}
-        eval_response = await model.generate_content_async(eval_prompt, generation_config={"response_mime_type": "application/json", "response_schema": eval_schema})
-        evaluations = json.loads(eval_response.text)
+        text = await llm_text('runSelfEvolution', eval_prompt, temperature=0.2)
+        evaluations = json.loads(text)
     except Exception as e:
         print(f"Self-evolution (evaluation) failed: {e}")
 
@@ -92,8 +84,8 @@ Guidelines:
 Return ONLY the merged insight text."""
 
     try:
-        merge_response = await model.generate_content_async(merge_prompt, generation_config={"temperature": 0.4})
-        return merge_response.text.strip()
+        text = await llm_text('runSelfEvolution', merge_prompt, temperature=0.4)
+        return text.strip() or top_variants[0]
     except Exception as e:
         print(f"Self-evolution (merging) failed: {e}")
         return top_variants[0] # Fallback to the best variant
@@ -108,6 +100,12 @@ async def verify_candidates(
 ) -> List[Dict[str, Any]]:
     """
     Verifies a list of candidate insights using web search.
+    TODO(reliability/perf):
+    - Parallelize per-candidate searches (async gather with rate limits)
+    - Improve matching (title weighting, fuzzy/snippet similarity, domain trust)
+    - Provider abstraction (add Bing/HF/Serper fallback; retry policy)
+    - Caching of queries and per-run dedupe to reduce cost
+    - Add tracing + usage metrics; expose thresholds via config
     """
     verifications = []
     for cand in candidates:
