@@ -11,6 +11,7 @@ import { Vault } from './Vault';
 import { Inbox } from './Inbox';
 import { ai } from '../lib/ai-lite';
 import { SettingsModal } from './SettingsModal';
+import { YaoTongPanel } from './YaoTongPanel';
 
 export const App: React.FC = () => {
     const {
@@ -63,6 +64,7 @@ export const App: React.FC = () => {
 
     const [backendReady, setBackendReady] = useState<boolean>(false);
     const [showSettings, setShowSettings] = useState<boolean>(false);
+    const [showYaoTong, setShowYaoTong] = useState<boolean>(false);
     useEffect(() => {
         // Probe backend health to decide whether to show API key warning
         fetch('/api/health').then(async (r) => {
@@ -97,6 +99,7 @@ export const App: React.FC = () => {
                         {newInsightCount > 0 && <span className="notification-badge">{newInsightCount}</span>}
                     </button>
                     <button className="tab-button" onClick={() => setShowSettings(true)} style={{marginLeft: 8}}>设置</button>
+                    <button className="tab-button" onClick={() => setShowYaoTong(true)} style={{marginLeft: 8}}>药童</button>
                 </nav>
             </header>
             <main>
@@ -115,6 +118,7 @@ export const App: React.FC = () => {
             </div>}
 
             {showSettings && <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />}
+            {showYaoTong && <YaoTongPanel onClose={() => setShowYaoTong(false)} />}
         </>
     );
 };

@@ -4,6 +4,7 @@ import json
 from typing import List, Optional
 
 from .models import PlanJSON
+from src.synapse.config.llm import llm_structured
 
 def _ensure_configured() -> bool:
     """Ensure the Google GenAI client is configured with an API key.
@@ -51,31 +52,49 @@ async def plan_next_step(
     """
     Analyzes the transcript and decides on the next step for the agent.
     """
+    # Prefer centralized router for production usage
+    try:
+        # Build concise messages for structured output
+        sys_msg = {
+            "role": "system",
+            "content": (
+                "You are a planning agent for deep research. Return a JSON object with "
+                "fields: rationale (string) and step {action, message, expected}. "
+                "Action must be one of: web_search | mind_map | continue | finalize | none."
+            ),
+        }
+        mind_hints_str = "- " + "\n- ".join(mind_hints) if mind_hints else "No hints."
+        user_msg = {
+            "role": "user",
+            "content": (
+                f"MIND_HINTS:\n{mind_hints_str}\n\nTRANSCRIPT:\n{transcript[:3000]}"
+            ),
+        }
+        result = await llm_structured("planNextStep", [sys_msg, user_msg], structured_model=PlanJSON, options={"temperature": temperature})
+        if result:
+            return result
+    except Exception:
+        # Fall back to legacy Google SDK path
+        pass
+
+    # Legacy fallback (kept for tests that patch genai path)
     if not _ensure_configured():
-        # Defer noisy warnings to the caller; silently skip when not configured
         return None
-
-    model = genai.GenerativeModel(MODEL_NAME)
-
-    prompt = """You are a planning agent for deep research. Your goal is to formulate a plan to resolve an insight.
+    try:
+        model = genai.GenerativeModel(MODEL_NAME)
+        prompt = """You are a planning agent for deep research. Your goal is to formulate a plan to resolve an insight.
 You can take several steps. Propose ONE step at a time.
 
 Your available actions are:
-- web_search: Use when you need external information, facts, or context. (e.g., "search for the definition of 'Bayesian Surprise'")
-- mind_map: Use to explore the relationships between concepts already in the transcript. (e.g., "explore the link between 'Insight' and 'Serendipity'")
-- continue: Use when you have gathered information and need to think or formulate the next question. Your 'message' should be your internal monologue.
-- finalize: Use ONLY when you have a complete answer and no further steps are needed. Your 'message' should be the final conclusion.
+- web_search: Use when you need external information, facts, or context.
+- mind_map: Use to explore relationships between concepts already in the transcript.
+- continue: Use when you need to think or formulate the next question.
+- finalize: Use ONLY when you have a complete answer.
 
 Analyze the transcript and propose the next logical step."""
-
-    mind_hints_str = "- " + "\n- ".join(mind_hints) if mind_hints else "No hints."
-
-    # The original slice was on characters. We replicate that here.
-    transcript_slice = transcript[:3000]
-
-    contents = f"{prompt}\n\nMIND_HINTS:\n{mind_hints_str}\n\nTRANSCRIPT:\n{transcript_slice}"
-
-    try:
+        mind_hints_str = "- " + "\n- ".join(mind_hints) if mind_hints else "No hints."
+        transcript_slice = transcript[:3000]
+        contents = f"{prompt}\n\nMIND_HINTS:\n{mind_hints_str}\n\nTRANSCRIPT:\n{transcript_slice}"
         response = await model.generate_content_async(
             contents,
             generation_config={
@@ -84,7 +103,6 @@ Analyze the transcript and propose the next logical step."""
                 "temperature": temperature,
             },
         )
-        # The response text should be a valid JSON string which we can parse
         plan_data = json.loads(response.text)
         return PlanJSON(**plan_data)
     except Exception as e:

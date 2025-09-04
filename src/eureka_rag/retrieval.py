@@ -3,12 +3,13 @@ import json
 import uuid
 from typing import List, Dict, Any
 import numpy as np
-import google.generativeai as genai
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.services.vector_index_manager import vector_index_manager
 from src.util.genai_compat import embed_texts_sync
+from src.synapse.config.llm import llm_text
 from src.database import crud
+from src.agentscope_app.telemetry import trace
 
 # --- Query Generation ---
 
@@ -26,20 +27,21 @@ def cheap_expand_queries(topic: str) -> Dict[str, str]:
         'TradeOff': f"{topic} trade-off at the cost of diminishing returns",
     }
 
+@trace("synapse.retrieval.generate_queries")
 async def generate_search_queries(note_title: str, note_content: str, max_queries: int) -> List[str]:
-    """Generates search queries based on a note's content."""
+    """Generates search queries; prefers AgentScope LLM via llm.py, falls back to cheap."""
     topic = note_title.strip() or note_content[:120]
     cheap = cheap_expand_queries(topic)
-    API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    if not API_KEY: return list(cheap.values())[:max_queries]
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    prompt = f"""Return JSON with ANY subset of keys: {', '.join(RELATIONS)}. Each value must be a concise search query derived from:\nTitle: {note_title}\nContent: {note_content[:1000]}"""
-    schema = {"type": "object", "properties": {key: {"type": "string"} for key in RELATIONS}, "required": []}
     try:
-        response = await model.generate_content_async(prompt, generation_config={"response_mime_type": "application/json", "response_schema": schema})
-        obj = json.loads(response.text)
-        all_queries = list(dict.fromkeys([*list(obj.values()), *list(cheap.values())]))
+        prompt = (
+            f"Return ONLY a JSON object with ANY subset of keys: {', '.join(RELATIONS)}. "
+            f"Each value must be a concise search query derived from the note.\n"
+            f"Title: {note_title}\nContent: {note_content[:1000]}"
+        )
+        text = await llm_text('generateSearchQueries', prompt)
+        obj = json.loads(text)
+        vals = [v for v in obj.values() if isinstance(v, str)]
+        all_queries = list(dict.fromkeys([*vals, *list(cheap.values())]))
         return all_queries[:max_queries]
     except Exception as e:
         print(f"Error generating search queries, using fallback: {e}")
@@ -51,6 +53,7 @@ def tokenize(s: str) -> List[str]:
     """Simple tokenizer that splits on whitespace and removes punctuation."""
     return "".join(c for c in s.lower() if c.isalnum() or c.isspace()).split()
 
+@trace("synapse.retrieval.lexical_rank")
 def lexical_rank_notes(queries: List[str], notes: List[Dict[str, Any]], top_n: int = 40) -> List[str]:
     """Ranks notes based on lexical similarity (term frequency) with queries."""
     q_terms = {term for query in queries for term in tokenize(query)}
@@ -58,9 +61,12 @@ def lexical_rank_notes(queries: List[str], notes: List[Dict[str, Any]], top_n: i
     scored.sort(key=lambda x: x['score'], reverse=True)
     return [x['id'] for x in scored[:top_n]]
 
+@trace("synapse.retrieval.vector_rank")
 async def vector_rank_notes(queries: List[str], db: AsyncSession, exclude_note_id: str, top_k: int) -> List[str]:
     """Ranks notes based on vector similarity using the global FAISS index."""
-    if not await vector_index_manager.index.ntotal: return []
+    # If the FAISS index is empty/uninitialized, fall back to lexical only
+    if not vector_index_manager.index.ntotal:
+        return []
 
     # Use cloud embeddings for queries to match index space
     query_embeddings = embed_texts_sync('text-embedding-004', queries)
@@ -107,6 +113,7 @@ def rrf(ranked_lists: List[List[str]], k: int = 60) -> List[str]:
     sorted_docs = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     return [doc_id for doc_id, _ in sorted_docs]
 
+@trace("synapse.retrieval.retrieve_candidates")
 async def retrieve_candidate_notes(
     queries: List[str],
     db: AsyncSession,

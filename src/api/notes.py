@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import crud, schemas
 from src.database.database import get_db
-from src.services import embedding_service
+from src.agentscope_app.agents.refiner import refine_note, remove_note_from_index
 
 router = APIRouter(
     prefix="/api/notes",
@@ -21,7 +21,8 @@ async def create_note_endpoint(note: schemas.NoteCreate, db: AsyncSession = Depe
     # The ID is available after the flush in create_note
     note_id = db_note.id
 
-    await embedding_service.generate_and_store_embeddings_for_note(note=db_note, db=db)
+    # Delegate to refiner agent for chunking + embedding + FAISS indexing
+    await refine_note(db_note, db)
 
     await db.commit()
 
@@ -61,7 +62,7 @@ async def update_note_endpoint(note_id: uuid.UUID, note: schemas.NoteUpdate, db:
     note_id = db_note.id
 
     if content_updated:
-        await embedding_service.generate_and_store_embeddings_for_note(note=db_note, db=db)
+        await refine_note(db_note, db)
 
     await db.commit()
 
@@ -78,10 +79,10 @@ async def delete_note_endpoint(note_id: uuid.UUID, db: AsyncSession = Depends(ge
     if db_note is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
 
-    # The response model needs the object, so we validate it before deleting
+    # Remove vectors/chunks before deleting the note
+    await remove_note_from_index(note_id, db)
+    # Capture response model before deletion
     response_data = schemas.Note.model_validate(db_note)
-
     await crud.delete_note(db, note_id=note_id)
     await db.commit()
-
     return response_data

@@ -13,6 +13,7 @@ from src.jobs import Phase, Insight, JobResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.eureka_rag.retrieval import generate_search_queries, retrieve_candidate_notes
 from src.backend.ranking import rank_insights
+from src.agentscope_app.telemetry import trace
 
 # --- Pipeline-specific Models ---
 class PipelineInput(BaseModel):
@@ -33,6 +34,7 @@ INSIGHT_SCHEMA = {
     }, "required": ["mode", "reframedProblem", "insightCore", "selectedHypothesisName", "hypotheses", "eurekaMarkers", "bayesianSurprise", "evidenceRefs", "test", "risks"]
 }
 
+@trace("synapse.legacy.generate_insight")
 async def generate_insight(evidence_chunks: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
     bullets = "\n".join([f"[{c['noteId']}::{c.get('childId', '')}] {c['text']}" for c in evidence_chunks])
     instr = (
@@ -81,6 +83,7 @@ async def run_synthesis_and_ranking(source_note: Dict[str, Any], candidate_notes
 
     return ranked[:3]
 
+@trace("synapse.legacy.constellation")
 async def generate_constellation_insight(evidence_chunks: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
     """Generates a 3-way constellation insight using the central LLM router."""
     bullets = "\n".join([f"[{c['noteId']}::{c.get('childId', '')}] {c['text']}" for c in evidence_chunks])
@@ -99,6 +102,7 @@ async def generate_constellation_insight(evidence_chunks: List[Dict[str, str]]) 
         print(f"Error in generate_constellation_insight: {e}")
         return None
 
+@trace("synapse.legacy.find_bridge")
 async def find_bridging_insight(
     base_insight: Dict[str, Any],
     source_note: Dict[str, Any],
@@ -158,7 +162,8 @@ async def find_bridging_insight(
 
 
 # --- Main Pipeline Orchestrator ---
-async def run_full_insight_pipeline(inp: PipelineInput, progress: ProgressReporter, db: AsyncSession) -> JobResult:
+@trace("synapse.legacy.pipeline")
+async def run_full_insight_pipeline_legacy(inp: PipelineInput, progress: ProgressReporter, db: AsyncSession) -> JobResult:
     await progress.update(Phase.candidate_selection, 5)
     all_chunks = [ChunkInput(id=f"{n['id']}:{i}", document_id=n['id'], text=p) for n in inp.notes for i, p in enumerate(n['content'].split('\n\n')) if p.strip()]
     if not all_chunks: raise ValueError("No chunks could be created from the provided notes.")
@@ -272,3 +277,22 @@ async def run_full_insight_pipeline(inp: PipelineInput, progress: ProgressReport
     await progress.update(Phase.finalizing, 100)
 
     return JobResult(version="v2", insights=final_insights)
+
+
+# --- AgentScope-based wrapper to preserve API compatibility ---
+async def run_full_insight_pipeline(inp: PipelineInput, progress: ProgressReporter, db: AsyncSession) -> JobResult:
+    """
+    Delegates to the AgentScope orchestrator while preserving the original
+    function name and signature for server compatibility.
+
+    Falls back to the legacy pipeline if the new module fails to import.
+    """
+    try:
+        from src.agentscope_app.flow.pipeline import run_full_insight_pipeline as new_run
+        from src.agentscope_app.schemas import PipelineInput as ASInput
+        # Normalize to the new schema to avoid type issues
+        normalized = ASInput.model_validate(inp.model_dump())
+        return await new_run(normalized, progress, db)
+    except Exception as e:
+        print(f"Warning: AgentScope pipeline unavailable, using legacy. Reason: {e}")
+        return await run_full_insight_pipeline_legacy(inp, progress, db)

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import type { Note } from '../lib/types';
 import { useTranslation } from '../context/LanguageProvider';
 
@@ -11,6 +11,13 @@ declare global {
 export const SideBySideViewer: React.FC<{ note1: Note; note2: Note; onClose: () => void; }> = ({ note1, note2, onClose }) => {
     const { t } = useTranslation();
     const createMarkup = (markdown: string): { __html: string } => ({ __html: window.marked.parse(markdown) });
+    const rightRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        const el = rightRef.current?.querySelector('.chunk-highlight, mark') as HTMLElement | null;
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, []);
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal-content side-by-side" onClick={e => e.stopPropagation()}>
@@ -25,7 +32,7 @@ export const SideBySideViewer: React.FC<{ note1: Note; note2: Note; onClose: () 
                     </div>
                     <div className="note-viewer">
                         <h3>{note2.title}</h3>
-                        <div className="content" dangerouslySetInnerHTML={createMarkup(note2.content)} />
+                        <div ref={rightRef} className="content chunk-highlight-container" dangerouslySetInnerHTML={createMarkup(note2.content)} />
                     </div>
                 </div>
             </div>
