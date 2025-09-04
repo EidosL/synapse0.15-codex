@@ -18,7 +18,11 @@ try:
     # Vendored path is added during server startup; import may still fail in tests
     from agentscope.tracing import trace as _as_trace  # type: ignore
     trace = _as_trace  # type: ignore
-except Exception:
+except ImportError:
+    # agentscope.tracing not available, fallback to no-op
+    trace = _noop_trace  # type: ignore
+except Exception as e:
+    # Other errors, fallback and optionally log for debugging
     trace = _noop_trace  # type: ignore
 
 
